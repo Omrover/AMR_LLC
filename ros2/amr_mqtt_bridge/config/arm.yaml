@@ -1,0 +1,17 @@
+# Calibración del brazo (4x GIM6010-8) y del gripper. Se carga junto a bridge.yaml.
+# rad = sign * (counts - zero_offset) * 2*pi / (counts_per_rev * gear_ratio)
+/**:   # también lo usa el MCU simulado de amr_gazebo (gz_mcu)
+  ros__parameters:
+    arm_joints: [arm_joint_1, arm_joint_2, arm_joint_3, arm_joint_4]
+    arm_counts_per_rev: 16384
+    # TBD: verificar si los 16384 counts/rev del 0xA4/0xDA son del eje de salida
+    # (gear_ratio = 1.0) o del rotor antes del reductor 8:1 (gear_ratio = 8.0).
+    arm_gear_ratio: 1.0
+    arm_zero_offset: [0, 0, 0, 0]     # counts en la pose q = 0 del DH (calibrar)
+    arm_sign: [1, 1, 1, 1]            # sentido motor vs. sentido DH
+    arm_lower: [-3.14159, -1.5708, -2.5, -2.5]   # rad, igual que params.xacro
+    arm_upper: [3.14159, 1.5708, 2.5, 2.5]
+    arm_default_accel: 2.0            # rad/s^2 si el cliente no especifica
+    arm_status_rate_hz: 10.0
+    gripper_joint: gripper_finger_joint
+    gripper_travel: 0.035             # m por dedo, igual que params.xacro

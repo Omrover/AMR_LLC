@@ -1,0 +1,46 @@
+# Fixtures del contrato v1, compartidos por las pruebas de C y de Python.
+# Formato: <topic relativo><TAB><valid|invalid><TAB><payload>
+# boot_id vigente del MCU para todas las líneas: b00710c0ffee0001
+cmd/vel	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":0.2,"vy":-0.1,"wz":0.3,"valid_ms":250}
+cmd/vel	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":4294967295,"vx":0,"vy":0,"wz":0,"valid_ms":1}
+cmd/vel	valid	{ "v" : 1 , "seq" : 2 , "boot_id" : "b00710c0ffee0001" , "vx" : -2.0 , "vy" : 2 , "wz" : -4.0 , "valid_ms" : 100 }
+cmd/vel	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":3,"vx":1e-3,"vy":-1.5E-1,"wz":0.0,"valid_ms":50}
+cmd/vel	invalid	{"v":1,"boot_id":"otherboot","seq":1,"vx":0.2,"vy":0,"wz":0,"valid_ms":250}
+cmd/vel	invalid	{"v":2,"boot_id":"b00710c0ffee0001","seq":1,"vx":0.2,"vy":0,"wz":0,"valid_ms":250}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":0.2,"vy":0,"wz":0,"valid_ms":251}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":0.2,"vy":0,"wz":0,"valid_ms":0}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":2.5,"vy":0,"wz":0,"valid_ms":250}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":0,"vy":0,"wz":4.1,"valid_ms":250}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":"0.2","vy":0,"wz":0,"valid_ms":250}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vy":0,"wz":0,"valid_ms":250}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":-1,"vx":0,"vy":0,"wz":0,"valid_ms":250}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":0,"vy":0,"wz":0,"valid_ms":2.5e2}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":0,"vx":0.5,"vy":0,"wz":0,"valid_ms":250}
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":0,"vy":0,"wz":0,"valid_ms":250} trailing
+cmd/vel	invalid	[1,2,3]
+cmd/vel	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":1,"vx":NaN,"vy":0,"wz":0,"valid_ms":250}
+cmd/arm	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":10,"op":"goal","pos":[0,4096,-2048,1024],"acc":[100,100,100,100],"dec":[100,100.5,100,100]}
+cmd/arm	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":11,"op":"enable"}
+cmd/arm	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":12,"op":"disable"}
+cmd/arm	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":13,"op":"clear"}
+cmd/arm	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":14,"op":"home"}
+cmd/arm	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":15,"op":"goal","pos":[0,4096,-2048],"acc":[100,100,100,100],"dec":[100,100,100,100]}
+cmd/arm	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":16,"op":"goal","pos":[0,4096,-2048,1.5],"acc":[100,100,100,100],"dec":[100,100,100,100]}
+cmd/arm	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":17,"op":"goal","pos":[0,0,0,0],"acc":[0,100,100,100],"dec":[100,100,100,100]}
+cmd/arm	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":18,"op":"goal","pos":[0,0,0,0],"acc":[100,100,100,100],"dec":[100,100,100,10001]}
+cmd/arm	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":19,"op":"goal","pos":[0,0,0,2147483648],"acc":[100,100,100,100],"dec":[100,100,100,100]}
+cmd/arm	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":20,"op":"goal"}
+cmd/arm	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":21,"op":"dance"}
+cmd/gripper	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":30,"pos":1.0,"max_cur":0.8}
+cmd/gripper	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":31,"pos":0,"max_cur":5}
+cmd/gripper	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":32,"pos":1.1,"max_cur":0.8}
+cmd/gripper	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":33,"pos":0.5,"max_cur":0}
+cmd/gripper	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":34,"pos":0.5,"max_cur":5.5}
+cmd/estop	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":40,"active":true}
+cmd/estop	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":41,"active":false}
+cmd/estop	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":42,"active":1}
+cmd/estop	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":43,"active":"true"}
+cmd/odom_reset	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":50,"x":0,"y":0,"yaw":0}
+cmd/odom_reset	valid	{"v":1,"boot_id":"b00710c0ffee0001","seq":51,"x":-12.5,"y":3.25,"yaw":-3.14159}
+cmd/odom_reset	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":52,"x":0,"y":0}
+cmd/odom_reset	invalid	{"v":1,"boot_id":"b00710c0ffee0001","seq":53,"x":0,"y":0,"yaw":7.0}
