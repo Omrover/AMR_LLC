@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_TLALOC
+
+if SERIAL
+
+config UART_CONSOLE
+	default y
+
+endif # SERIAL
+
+# El FS26 de la FRDM-A está en modo normal (JP1 26-27): su fase INIT_FS debe
+# cerrarse en < 256 ms tras el reset o el SBC reinicia al MCU. El driver lo hace
+# en su init, así que GPIO, SPI y el propio FS26 se inicializan lo antes posible.
+if SPI
+
+config GPIO_INIT_PRIORITY
+	default 10
+
+config SPI_INIT_PRIORITY
+	default 10
+
+if WDT_NXP_FS26
+
+config WDT_NXP_FS26_INIT_PRIORITY
+	default 10
+
+endif # WDT_NXP_FS26
+endif # SPI
+
+configdefault ETH_DRIVER
+	default y if !NET_LOOPBACK && !NET_TEST
+
+endif # BOARD_TLALOC

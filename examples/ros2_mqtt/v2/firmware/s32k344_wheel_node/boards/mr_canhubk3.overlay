@@ -1,0 +1,29 @@
+/*
+ * MR-CANHUBK3 (S32K344) wiring for the class 10 wheel node.
+ * CHECK AGAINST YOUR ROBOT before enabling CONFIG_LAB_ALLOW_PWM.
+ *
+ * Encoder: board qdec0 = eMIOS0 ch6/7 via LCU1 + TRGMUX, phases on PTB2/PTB3.
+ * Motors : eMIOS0 PWM ch0..3 on PTB12..PTB15 (board emios0_default pinctrl),
+ *          2-input H-bridge per wheel (e.g. DRV8833): IN1 forward, IN2 reverse.
+ */
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	zephyr,user {
+		/* 1 kHz: the eMIOS0 channel clock is 100 kHz -> 100 duty steps */
+		pwms = <&emios0_pwm 0 PWM_MSEC(1) PWM_POLARITY_NORMAL>,
+		       <&emios0_pwm 1 PWM_MSEC(1) PWM_POLARITY_NORMAL>,
+		       <&emios0_pwm 2 PWM_MSEC(1) PWM_POLARITY_NORMAL>,
+		       <&emios0_pwm 3 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+		pwm-names = "left_in1", "left_in2", "right_in1", "right_in2";
+	};
+};
+
+&qdec0 {
+	/*
+	 * Decoded ticks per WHEEL revolution x 1e6 (include the gearbox).
+	 * Measure it: mark the wheel, turn exactly 10 revolutions by hand and
+	 * divide the tick change by 10. Keep it a whole number of ticks.
+	 */
+	micro-ticks-per-rev = <600000000>;
+};

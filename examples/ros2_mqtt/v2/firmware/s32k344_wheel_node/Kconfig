@@ -1,0 +1,28 @@
+mainmenu "Class 10 S32K344 wheel node"
+
+config LAB_BROKER_ADDR
+	string "MQTT broker IPv4 address (the NUC)"
+	default "192.168.50.1"
+
+config LAB_BROKER_PORT
+	int "MQTT broker TCP port"
+	default 18883
+
+config LAB_MQTT_PREFIX
+	string "MQTT topic prefix, unique per robot"
+	default "class10/robot01"
+
+config LAB_ALLOW_PWM
+	bool "Accept wheel PWM commands (wheels lifted only!)"
+	help
+	  When disabled the node is read-only: it never subscribes to
+	  <prefix>/wheel_pwm and every motor input stays low.
+
+config LAB_USE_SOLUTION
+	bool "Build src/student_solution.c instead of src/student.c"
+
+config LAB_SIM_HAND_SPIN
+	bool "native_sim: turn the simulated wheel at 120 ticks/s"
+	depends on ARCH_POSIX
+
+source "Kconfig.zephyr"

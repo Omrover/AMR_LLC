@@ -1,0 +1,5 @@
+board:
+  name: tlaloc
+  full_name: Omrover Tlaloc (FRDM-A-S32K344)
+  socs:
+    - name: s32k344

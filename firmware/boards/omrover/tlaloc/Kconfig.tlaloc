@@ -1,0 +1,8 @@
+# Tarjeta Tlaloc del Mobile Manipulator: FRDM-A-S32K344 (S32K344EHT1MPBST, 172 HDQFP).
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_TLALOC
+	select SOC_S32K344
+	# Zephyr solo define este número de parte para el S32K344 (mismo silicio y
+	# encapsulado 172 HDQFP que el S32K344EHT1MPBST de la FRDM-A).
+	select SOC_PART_NUMBER_PS32K344EHVPBS

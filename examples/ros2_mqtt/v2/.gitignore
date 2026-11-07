@@ -1,0 +1,8 @@
+ws/build/
+ws/install/
+ws/log/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
+firmware/s32k344_wheel_node/build*/

@@ -1,0 +1,135 @@
+/*
+ * Pines de Tlaloc (FRDM-A-S32K344, S32K344 172 HDQFP).
+ *
+ * Fuente: ruteo del robot (C:/Users/Ivani/routing, nov 2026) y esquemático de la
+ * FRDM-A (MoMa/hardware/document.md). Lo marcado VERIFICAR no viene del ruteo y
+ * hay que confirmarlo con el .mex o el esquemático en PDF antes de energizar.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <nxp/s32/pinctrl/S32K344_K324_K314_172HDQFP-pinctrl.h>
+
+&pinctrl {
+	/* INT de la BNO080 (activo bajo) en PTA21 = EIRQ3 */
+	eirq0_default: eirq0_default {
+		group1 {
+			pinmux = <PTA21_EIRQ3>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+
+	/* Consola: OpenSDA (K26) DEBUG_UART0 -> LPUART6 RX PTA15 / TX PTA16 */
+	lpuart6_default: lpuart6_default {
+		group1 {
+			pinmux = <PTA16_LPUART6_TX_O>;
+			output-enable;
+		};
+
+		group2 {
+			pinmux = <PTA15_LPUART6_RX>;
+			input-enable;
+		};
+	};
+
+	/*
+	 * RoboClaw 128 y 129 en Packet Serial Multi-Unit: LPUART3 TX PTD2, RX PTD3.
+	 * En Multi-Unit las salidas S2 de ambas RoboClaw van unidas al RX con un
+	 * pull-up externo (manual RoboClaw); el pull-up interno es solo respaldo.
+	 */
+	lpuart3_default: lpuart3_default {
+		group1 {
+			pinmux = <PTD2_LPUART3_TX_O>;
+			output-enable;
+		};
+
+		group2 {
+			pinmux = <PTD3_LPUART3_RX>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+
+	/* BNO080 por I2C: LPI2C0 SDA PTD13, SCL PTD14 */
+	lpi2c0_default: lpi2c0_default {
+		group1 {
+			pinmux = <(PTD13_LPI2C0_SDA_I | PTD13_LPI2C0_SDA_O)>,
+				 <(PTD14_LPI2C0_SCL_I | PTD14_LPI2C0_SCL_O)>;
+			input-enable;
+			output-enable;
+		};
+	};
+
+	/* Brazo (GIM6010-8): FlexCAN0 RX PTA6, TX PTA7 -> TJA1043 */
+	flexcan0_default: flexcan0_default {
+		group1 {
+			pinmux = <PTA6_CAN0_RX>;
+			input-enable;
+		};
+
+		group2 {
+			pinmux = <PTA7_CAN0_TX>;
+			output-enable;
+		};
+	};
+
+	/* Servo del gripper: eMIOS1 canal 10 (tipo H) en PTA27 */
+	emios1_default: emios1_default {
+		group1 {
+			pinmux = <PTA27_EMIOS_1_CH10_H_O>;
+			output-enable;
+		};
+	};
+
+	/*
+	 * FS26 (SBC) por LPSPI0, según las redes FS26_MOSI/MISO/SCLK/CSB del
+	 * esquemático: PCS0 PTB0, SOUT PTB1, SCK PTC8, SIN PTC9.
+	 */
+	lpspi0_default: lpspi0_default {
+		group1 {
+			pinmux = <PTC8_LPSPI0_SCK_O>, <PTB1_LPSPI0_SOUT_O>, <PTB0_LPSPI0_PCS0_O>;
+			output-enable;
+		};
+
+		group2 {
+			pinmux = <PTC9_LPSPI0_SIN_I>;
+			input-enable;
+		};
+	};
+
+	/*
+	 * Ethernet RMII hacia el KSZ8091RNA. VERIFICAR: el esquemático en .md no
+	 * conserva la página del MCU; estos son los pines RMII de referencia de NXP
+	 * para el S32K344 172 HDQFP (los mismos de la MR-CANHUBK3).
+	 */
+	emac0_default: emac0_default {
+		group1 {
+			pinmux = <PTC0_EMAC_MII_RMII_RXD0>,
+				 <PTC1_EMAC_MII_RMII_RXD1>,
+				 <PTC14_EMAC_MII_RMII_RX_ER>,
+				 <PTC15_EMAC_MII_RMII_RX_DV>,
+				 <PTD6_EMAC_MII_RMII_TX_CLK>;
+			input-enable;
+		};
+
+		group2 {
+			pinmux = <PTB5_EMAC_MII_RMII_TXD0>,
+				 <PTB4_EMAC_MII_RMII_TXD1>,
+				 <PTE9_EMAC_MII_RMII_TX_EN>;
+		};
+	};
+
+	mdio0_default: mdio0_default {
+		group1 {
+			pinmux = <(PTD16_EMAC_MII_RMII_MDIO_O | PTD16_EMAC_MII_RMII_MDIO_I)>;
+			input-enable;
+			output-enable;
+		};
+
+		group2 {
+			pinmux = <PTE8_EMAC_MII_RMII_MDC>;
+			output-enable;
+		};
+	};
+};

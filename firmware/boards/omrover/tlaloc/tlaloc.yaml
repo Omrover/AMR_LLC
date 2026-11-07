@@ -1,0 +1,18 @@
+identifier: tlaloc
+name: Omrover Tlaloc (FRDM-A-S32K344)
+type: mcu
+arch: arm
+ram: 1024
+flash: 4096
+toolchain:
+  - zephyr
+supported:
+  - adc
+  - can
+  - gpio
+  - i2c
+  - netif:eth
+  - pwm
+  - spi
+  - uart
+  - watchdog

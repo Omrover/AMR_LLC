@@ -1,0 +1,219 @@
+/*
+ * Tlaloc: FRDM-A-S32K344 como controlador de bajo nivel del Mobile Manipulator.
+ * Derivada de boards/nxp/mr_canhubk3 (mismo SoC y encapsulado) con el ruteo
+ * del robot. Ver tlaloc-pinctrl.dtsi para el origen de cada pin.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+#include <arm/nxp/s32/nxp_s32k344_m7.dtsi>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/gpio/nxp-siul2-gpio.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <freq.h>
+#include "tlaloc-pinctrl.dtsi"
+
+/ {
+	model = "Omrover Tlaloc (FRDM-A-S32K344)";
+	compatible = "nxp,frdm-a-s32k344";
+
+	chosen {
+		zephyr,sram = &sram0_1;
+		zephyr,flash = &flash0;
+		zephyr,itcm = &itcm;
+		zephyr,dtcm = &dtcm;
+		zephyr,code-partition = &code_partition;
+		zephyr,console = &lpuart6;
+		zephyr,shell-uart = &lpuart6;
+		zephyr,flash-controller = &c40fc;
+		zephyr,canbus = &flexcan0;
+	};
+
+	aliases {
+		roboclaw-uart = &lpuart3;
+		imu-i2c = &lpi2c0;
+		watchdog0 = &fs26_wdt;
+	};
+};
+
+/* VERIFICAR: igual que la MR-CANHUBK3 (V15 del MCU desde el FS26). */
+&pmc {
+	lm-reg;
+};
+
+&c40fc {
+	status = "okay";
+};
+
+&flash0 {
+	status = "okay";
+
+	partitions {
+		ranges;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		ivt_header: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "ivt-header";
+			reg = <0x00000000 0x100>;
+		};
+
+		code_partition: partition@100 {
+			compatible = "zephyr,mapped-partition";
+			label = "code-partition";
+			reg = <0x00000100 (DT_SIZE_K(4048) - 0x100)>;
+		};
+	};
+};
+
+&gpioa_h {
+	status = "okay";
+};
+
+&gpioe_h {
+	status = "okay";
+};
+
+&eirq0 {
+	pinctrl-0 = <&eirq0_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/* PTE18 (FS26 INTB) no tiene EIRQ: su interrupción entra por el WKPU. */
+&wkpu {
+	status = "okay";
+};
+
+&lpuart6 {
+	pinctrl-0 = <&lpuart6_default>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};
+
+&lpuart3 {
+	pinctrl-0 = <&lpuart3_default>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};
+
+/* BNO080 (0x4A con SA0 a GND). Comparte bus solo con lo que cuelgue de PTD13/14. */
+&lpi2c0 {
+	pinctrl-0 = <&lpi2c0_default>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	status = "okay";
+};
+
+/* GIM6010-8 a 1 Mbit/s. VERIFICAR: pines EN/STB del TJA1043 (si van al MCU,
+ * agregar un nodo can-transceiver-gpio y "phys"). */
+&flexcan0 {
+	pinctrl-0 = <&flexcan0_default>;
+	pinctrl-names = "default";
+	bitrate = <1000000>;
+	status = "okay";
+};
+
+/*
+ * Servo del gripper a 50 Hz. Reloj eMIOS 160 MHz / 32 (global) / 2 (bus A) =
+ * 2.5 MHz: 20 ms = 50000 cuentas (< 65535), resolución de 0.4 us en el pulso.
+ */
+&emios1 {
+	clock-divider = <32>;
+	status = "okay";
+
+	master_bus {
+		emios1_bus_a {
+			mode = "MCB_UP_COUNTER";
+			prescaler = <2>;
+			status = "okay";
+		};
+	};
+
+	emios1_pwm: pwm {
+		pinctrl-0 = <&emios1_default>;
+		pinctrl-names = "default";
+		status = "okay";
+
+		gripper_servo: gripper_servo {
+			channel = <10>;
+			master-bus = <&emios1_bus_a>;
+			pwm-mode = "OPWMB";
+		};
+	};
+};
+
+/*
+ * ACS712 en PTD1 = ADC0 canal de precisión 0. El driver de Zephyr convierte a
+ * 14 bits (máxima del SAR) y promedia 4 muestras por hardware (oversampling 2).
+ */
+&adc0 {
+	group-channel = "precision";
+	callback-select = "normal-end-chain";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,vref-mv = <3300>;
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <14>;
+		zephyr,oversampling = <2>;
+	};
+};
+
+/*
+ * FS26 (PFS2613, ASIL B -> watchdog "simple"; VERIFICAR la variante OTP si el
+ * driver reporta error de token). En modo normal el driver cierra INIT_FS en su
+ * init con el watchdog deshabilitado; main.c lo habilita y lo alimenta.
+ */
+&lpspi0 {
+	pinctrl-0 = <&lpspi0_default>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	fs26_wdt: watchdog@0 {
+		compatible = "nxp,fs26-wdog";
+		reg = <0>;
+		spi-max-frequency = <DT_FREQ_M(5)>;
+		type = "simple";
+		int-gpios = <&gpioe_h 2 (GPIO_ACTIVE_LOW | NXP_SIUL2_GPIO_INT_WKPU)>;
+		status = "okay";
+	};
+};
+
+/* Ethernet 100BASE-TX: KSZ8091RNA en RMII con oscilador de 50 MHz (Y4). */
+&emac0 {
+	pinctrl-0 = <&emac0_default>;
+	pinctrl-names = "default";
+	phy-connection-type = "rmii";
+	local-mac-address = [02 04 9f 7a 1a 0c];
+	phy-handle = <&phy>;
+	status = "okay";
+};
+
+&mdio0 {
+	pinctrl-0 = <&mdio0_default>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	/* VERIFICAR la dirección (straps PHYAD del KSZ8091; 0 por defecto). El
+	 * driver KSZ8081 es compatible a nivel de registros con el KSZ8091RNA. */
+	phy: ethernet-phy@0 {
+		compatible = "microchip,ksz8081";
+		reg = <0>;
+		microchip,interface-type = "rmii";
+		status = "okay";
+	};
+};
+
+&edma0 {
+	status = "okay";
+};

@@ -1,0 +1,107 @@
+mainmenu "Tlaloc LLC (Mobile Manipulator)"
+
+menu "Red y MQTT"
+
+config TLALOC_BROKER_ADDR
+	string "IPv4 del broker MQTT (la NUC en eno1)"
+	default "192.168.50.1"
+
+config TLALOC_BROKER_PORT
+	int "Puerto del broker"
+	default 18883
+
+config TLALOC_MQTT_PREFIX
+	string "Prefijo de topics (único por robot)"
+	default "omrover/mm01"
+
+endmenu
+
+menu "Tracción (RoboClaw)"
+
+config TLALOC_ALLOW_MOTION
+	bool "Aceptar cmd/vel"
+	default y
+	help
+	  Deshabilitado, todo cmd/vel se trata como inválido: la base queda
+	  detenida pero se sigue publicando odometría (útil para empujar el
+	  robot a mano y verificar encoders).
+
+config TLALOC_COUNTS_PER_REV
+	int "Cuentas de encoder por vuelta de RUEDA"
+	default 8000
+	help
+	  E6B2-CWZ 1000 PPR x4 en la salida del motorreductor y rueda:motor 1:2.
+	  Verificar: marcar la rueda, girarla una vuelta a mano y leer el
+	  encoder en Motion Studio.
+
+config TLALOC_MAX_QPPS
+	int "QPPS máximo configurado en las RoboClaw"
+	default 5000
+
+config TLALOC_SIGN_WHEEL1_FL
+	int "Signo rueda 1 (fl, RoboClaw 128 M1)"
+	range -1 1
+	default 1
+
+config TLALOC_SIGN_WHEEL2_RL
+	int "Signo rueda 2 (rl, RoboClaw 129 M1)"
+	range -1 1
+	default 1
+
+config TLALOC_SIGN_WHEEL3_RR
+	int "Signo rueda 3 (rr, RoboClaw 129 M2)"
+	range -1 1
+	default 1
+
+config TLALOC_SIGN_WHEEL4_FR
+	int "Signo rueda 4 (fr, RoboClaw 128 M2)"
+	range -1 1
+	default 1
+
+endmenu
+
+menu "IMU (BNO080)"
+
+config TLALOC_BNO080_ADDR
+	hex "Dirección I2C de la BNO080"
+	default 0x4A
+	help
+	  0x4A con SA0/DI a GND, 0x4B con SA0 a VCC.
+
+config TLALOC_IMU_Z_DOWN
+	bool "La BNO080 está montada con su eje z hacia abajo"
+
+endmenu
+
+menu "Gripper"
+
+config TLALOC_GRIP_PULSE_OPEN_US
+	int "Pulso del servo con el gripper abierto (us)"
+	default 1000
+
+config TLALOC_GRIP_PULSE_CLOSED_US
+	int "Pulso del servo con el gripper cerrado (us)"
+	default 2000
+
+config TLALOC_ACS712_MV_PER_A_X10
+	int "Sensibilidad del ACS712 vista en el ADC (mV/A x10)"
+	default 1233
+	help
+	  ACS712-05B = 185 mV/A, -20A = 100, -30A = 66, multiplicado por la
+	  relación del divisor hacia el ADC de 3.3 V (2/3 por defecto).
+
+config TLALOC_SIM_GRIP_OBJECT
+	bool "native_sim: hay una pieza a media carrera del gripper"
+	depends on ARCH_POSIX
+	default y
+
+endmenu
+
+config TLALOC_FS26_WATCHDOG
+	bool "Habilitar y alimentar el watchdog del FS26"
+	default y if WDT_NXP_FS26
+	help
+	  Con el FS26 en modo normal, un firmware colgado provoca un reset. Al
+	  depurar con breakpoints, poner el FS26 en modo debug o deshabilitarlo.
+
+source "Kconfig.zephyr"

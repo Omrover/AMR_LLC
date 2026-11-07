@@ -1,0 +1,16 @@
+/*
+ * Señales que usa la app (el hardware está en boards/omrover/tlaloc).
+ */
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	zephyr,user {
+		/* servo del gripper a 50 Hz en eMIOS1 ch10 (PTA27) */
+		pwms = <&emios1_pwm 10 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
+		pwm-names = "gripper";
+		/* ACS712 en ADC0 precisión ch0 (PTD1) */
+		io-channels = <&adc0 0>;
+		/* INT de la BNO080, activo bajo, PTA21 = gpioa_h 5 (EIRQ3) */
+		imu-int-gpios = <&gpioa_h 5 GPIO_ACTIVE_LOW>;
+	};
+};
