@@ -9,8 +9,8 @@
     arm_gear_ratio: 1.0
     arm_zero_offset: [0, 0, 0, 0]     # counts en la pose q = 0 del DH (calibrar)
     arm_sign: [1, 1, 1, 1]            # sentido motor vs. sentido DH
-    arm_lower: [-3.14159, -1.5708, -2.5, -2.5]   # rad, igual que params.xacro
-    arm_upper: [3.14159, 1.5708, 2.5, 2.5]
+    arm_lower: [-3.1416, -1.5708, -2.5, -2.5]   # rad, params.xacro (q1 = ±pi alcanza la bandeja)
+    arm_upper: [3.1416, 1.5708, 2.5, 2.5]
     arm_default_accel: 2.0            # rad/s^2 si el cliente no especifica
     arm_status_rate_hz: 10.0
     gripper_joint: gripper_finger_joint
