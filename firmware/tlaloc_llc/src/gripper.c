@@ -6,11 +6,11 @@
 void grip_default_cfg(grip_cfg_t *cfg)
 {
 	memset(cfg, 0, sizeof(*cfg));
-	cfg->pulse_open_us = 1000;   /* VERIFICAR con el servo MOT-135 */
+	cfg->pulse_open_us = 1000;   /* servo MOT-135: 1000-2000 us a 50 Hz */
 	cfg->pulse_closed_us = 2000;
 	cfg->speed = 1.0f;
-	/* ACS712-05B: 185 mV/A a 5 V. Con un divisor 2/3 hacia el ADC de 3.3 V se ve
-	 * 123.3 mV/A. VERIFICAR modelo y divisor. */
+	/* ACS712-05B: 185 mV/A a 5 V. Con un divisor 2/3 (10k/20k) hacia el ADC de
+	 * 3.3 V se ve 123.3 mV/A; con 1/2 serían 92.5 (TLALOC_ACS712_MV_PER_A_X10). */
 	cfg->mv_per_a = 123.3f;
 	cfg->cur_tau_s = 0.03f;
 	cfg->grasp_ms = 80;
@@ -60,7 +60,7 @@ uint32_t grip_step(grip_t *g, uint32_t dt_ms, float adc_mv, bool adc_ok)
 	g->adc_fault = !adc_ok;
 	if (!g->zero_ready) {
 		if (adc_ok) {
-			g->cal_acc += adc_mv;
+			g->cal_acc += (double)adc_mv;
 			g->cal_n++;
 		}
 		g->cal_ms += dt_ms;
