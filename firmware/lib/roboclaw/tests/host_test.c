@@ -66,6 +66,12 @@ static void test_frame_bytes(void)
 	CHECK(rc_duty_m1m2(&rc, 129, -32767, 0) == RC_OK);
 	CHECK(r.n == 8 && r.written[0] == 129 && r.written[1] == 34 && r.written[2] == 0x80 &&
 	      r.written[3] == 0x01);
+
+	r.n = 0; /* Set Serial Timeout: [addr][14][décimas][crc] */
+	CHECK(rc_set_serial_timeout(&rc, 128, 5) == RC_OK);
+	crc = rc_crc16(0, r.written, 3);
+	CHECK(r.n == 5 && r.written[1] == 14 && r.written[2] == 5 &&
+	      r.written[3] == (uint8_t)(crc >> 8) && r.written[4] == (uint8_t)crc);
 }
 
 static void test_reads_against_sim(void)
@@ -95,6 +101,12 @@ static void test_reads_against_sim(void)
 	CHECK(strstr(ver, "Roboclaw") != NULL && strchr(ver, '\n') == NULL);
 	CHECK(rc_reset_encoders(&rc, 128) == RC_OK);
 	CHECK(rc_read_encoders(&rc, 128, &e1, &e2) == RC_OK && e1 == 0);
+	{
+		uint8_t to = 0;
+		CHECK(rc_read_serial_timeout(&rc, 129, &to) == RC_OK && to == 30);
+		CHECK(rc_set_serial_timeout(&rc, 129, 5) == RC_OK);
+		CHECK(rc_read_serial_timeout(&rc, 129, &to) == RC_OK && to == 5);
+	}
 
 	/* Contador cerca del desborde: se reporta con signo (complemento a dos). */
 	sim.dev[0].enc[0] = 2147483647.0 + 10.0;

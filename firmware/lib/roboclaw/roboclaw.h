@@ -23,6 +23,8 @@ extern "C" {
 
 /* Comandos usados (manual de usuario RoboClaw, sección Packet Serial). */
 enum {
+	RC_CMD_SET_SERIAL_TIMEOUT = 14,
+	RC_CMD_READ_SERIAL_TIMEOUT = 15,
 	RC_CMD_RESET_ENCODERS = 20,
 	RC_CMD_READ_VERSION = 21,
 	RC_CMD_READ_MAIN_BATTERY = 24,
@@ -92,6 +94,11 @@ rc_status_t rc_read_currents(roboclaw_t *rc, uint8_t addr, float *amp_m1, float 
 /* Estado de error de 32 bits (firmware 4.1.x+). */
 rc_status_t rc_read_status(roboclaw_t *rc, uint8_t addr, uint32_t *status);
 rc_status_t rc_reset_encoders(roboclaw_t *rc, uint8_t addr);
+/* Timeout de Packet Serial en décimas de segundo (0 = deshabilitado): si no
+ * llega ninguna trama válida en ese lapso, la RoboClaw detiene los motores.
+ * Es volátil (no se guarda en EEPROM): se envía en cada arranque. */
+rc_status_t rc_set_serial_timeout(roboclaw_t *rc, uint8_t addr, uint8_t tenths);
+rc_status_t rc_read_serial_timeout(roboclaw_t *rc, uint8_t addr, uint8_t *tenths);
 /* Cadena de versión terminada en '\n' '\0' + CRC (hasta 48 caracteres). */
 rc_status_t rc_read_version(roboclaw_t *rc, uint8_t addr, char *out, size_t size);
 

@@ -34,6 +34,9 @@ typedef struct {
 	uint32_t status;
 	bool duty_mode;     /* último comando fue duty */
 	uint32_t commands;  /* tramas de escritura aceptadas */
+	uint8_t serial_timeout_ds; /* timeout de Packet Serial (0 = off) */
+	double since_packet; /* s desde la última trama válida */
+	uint32_t timeouts;   /* veces que el timeout detuvo los motores */
 } rc_sim_dev_t;
 
 typedef struct {

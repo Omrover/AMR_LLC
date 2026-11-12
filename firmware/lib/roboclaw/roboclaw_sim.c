@@ -12,6 +12,7 @@ void rc_sim_init(rc_sim_t *s, uint8_t addr0, uint8_t addr1)
 		s->dev[i].present = true;
 		s->dev[i].battery_v = 24.6f;
 		s->dev[i].logic_v = 5.0f;
+		s->dev[i].serial_timeout_ds = 30; /* configuración actual: 3 s */
 	}
 }
 
@@ -29,6 +30,13 @@ void rc_sim_step(rc_sim_t *s, double dt)
 {
 	for (int i = 0; i < RC_SIM_DEVICES; i++) {
 		rc_sim_dev_t *d = &s->dev[i];
+		d->since_packet += dt;
+		if (d->serial_timeout_ds > 0U &&
+		    d->since_packet > (double)d->serial_timeout_ds / 10.0 &&
+		    (d->target[0] != 0.0 || d->target[1] != 0.0)) {
+			d->target[0] = d->target[1] = 0.0; /* timeout serie: motores a cero */
+			d->timeouts++;
+		}
 		for (int m = 0; m < 2; m++) {
 			double err = d->target[m] - d->speed[m];
 			double step = d->accel > 0.0 ? d->accel * dt : fabs(err);
@@ -98,6 +106,7 @@ static int write_len(uint8_t cmd)
 {
 	switch (cmd) {
 	case RC_CMD_RESET_ENCODERS: return 0;
+	case RC_CMD_SET_SERIAL_TIMEOUT: return 1;
 	case RC_CMD_DUTY_M1M2: return 4;
 	case RC_CMD_SPEED_M1M2: return 8;
 	case RC_CMD_SPEED_ACCEL_M1M2: return 12;
@@ -108,6 +117,7 @@ static int write_len(uint8_t cmd)
 	case RC_CMD_READ_ENCODERS:
 	case RC_CMD_READ_ISPEEDS:
 	case RC_CMD_READ_STATUS:
+	case RC_CMD_READ_SERIAL_TIMEOUT:
 		return -1;
 	default:
 		return -2;
@@ -147,6 +157,10 @@ static void handle_read(rc_sim_t *s, rc_sim_dev_t *d, const uint8_t *req)
 		}
 		n = 4;
 		break;
+	case RC_CMD_READ_SERIAL_TIMEOUT:
+		out[0] = d->serial_timeout_ds;
+		n = 1;
+		break;
 	case RC_CMD_READ_STATUS:
 		put_be32(out, d->status);
 		n = 4;
@@ -170,6 +184,9 @@ static void handle_write(rc_sim_t *s, rc_sim_dev_t *d, const uint8_t *frame, siz
 	switch (frame[1]) {
 	case RC_CMD_RESET_ENCODERS:
 		d->enc[0] = d->enc[1] = 0.0;
+		break;
+	case RC_CMD_SET_SERIAL_TIMEOUT:
+		d->serial_timeout_ds = data[0];
 		break;
 	case RC_CMD_DUTY_M1M2:
 		/* duty 0 = rueda libre; se modela como frenado inmediato */
@@ -221,12 +238,14 @@ static int sim_write(void *ctx, const uint8_t *buf, size_t n)
 			continue;
 		}
 		if (wl == -1) {
+			d->since_packet = 0.0;
 			handle_read(s, d, s->rx);
 			s->rx_len = 0;
 		} else if (s->rx_len == (size_t)wl + 4U) {
 			uint16_t crc = rc_crc16(0, s->rx, (size_t)wl + 2U);
 			uint16_t got = (uint16_t)(((uint16_t)s->rx[wl + 2] << 8) | s->rx[wl + 3]);
 			if (crc == got) {
+				d->since_packet = 0.0;
 				handle_write(s, d, s->rx, s->rx_len);
 			} else {
 				s->bad_frames++; /* el RoboClaw real no responde a CRC inválido */
