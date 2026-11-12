@@ -28,15 +28,40 @@ config TLALOC_ALLOW_MOTION
 
 config TLALOC_COUNTS_PER_REV
 	int "Cuentas de encoder por vuelta de RUEDA"
-	default 8000
+	default 2000
 	help
-	  E6B2-CWZ 1000 PPR x4 en la salida del motorreductor y rueda:motor 1:2.
-	  Verificar: marcar la rueda, girarla una vuelta a mano y leer el
-	  encoder en Motion Studio.
+	  E6B2-CWZ de 500 PPR x4 montado en el eje de la rueda (una vuelta de
+	  rueda = una del encoder = dos del motor). Verificar: marcar la rueda,
+	  girarla una vuelta a mano y leer el encoder en Motion Studio.
 
 config TLALOC_MAX_QPPS
 	int "QPPS máximo configurado en las RoboClaw"
 	default 5000
+
+config TLALOC_WHEEL_MAX_RPM
+	int "Velocidad máxima física de la rueda (rpm)"
+	default 82
+	help
+	  Motor de 165 rpm con rueda:motor 1:2. El límite por rueda es el menor
+	  entre este valor (con 10 % de margen) y TLALOC_MAX_QPPS (3 %).
+
+config TLALOC_RC_SERIAL_TIMEOUT_DS
+	int "Timeout de Packet Serial que se programa en las RoboClaw (décimas de s)"
+	range 0 255
+	default 5
+	help
+	  Se envía al arrancar y tras cada reconexión (comando 14, volátil). Si el
+	  MCU deja de enviar tramas, las RoboClaw detienen los motores en este
+	  tiempo. 0 = no tocar el valor guardado en la RoboClaw.
+
+config TLALOC_ARM_LIMIT_COUNTS
+	int "Límite de seguridad del brazo en el MCU (counts, simétrico)"
+	default 16384
+	help
+	  Ningún goal del brazo puede salir de +-este valor por junta. Con 16384
+	  counts por vuelta del eje de salida equivale a +-360 grados. Si los
+	  counts resultan ser del rotor (reductor 8:1, arm_gear_ratio = 8 en
+	  arm.yaml), subirlo a 131072.
 
 config TLALOC_SIGN_WHEEL1_FL
 	int "Signo rueda 1 (fl, RoboClaw 128 M1)"
@@ -87,8 +112,10 @@ config TLALOC_ACS712_MV_PER_A_X10
 	int "Sensibilidad del ACS712 vista en el ADC (mV/A x10)"
 	default 1233
 	help
-	  ACS712-05B = 185 mV/A, -20A = 100, -30A = 66, multiplicado por la
-	  relación del divisor hacia el ADC de 3.3 V (2/3 por defecto).
+	  ACS712-05B = 185 mV/A multiplicado por la relación del divisor hacia
+	  el ADC de 3.3 V. Por defecto 2/3 (10k en serie y 20k a GND): 123.3.
+	  Con 10k/10k (1/2) usar 925. El ACS712 pide >= 4.7k de carga, así que
+	  no usar resistencias de 1k en el divisor.
 
 config TLALOC_SIM_GRIP_OBJECT
 	bool "native_sim: hay una pieza a media carrera del gripper"
