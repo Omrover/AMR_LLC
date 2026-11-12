@@ -6,7 +6,7 @@ import pytest
 
 from amr_mqtt_bridge.arm_units import ArmUnits
 from amr_mqtt_bridge.battery import battery_level, soc_from_voltage
-from amr_mqtt_bridge.omni import OmniKinematics, integrate_pose
+from amr_mqtt_bridge.omni import MecanumKinematics, OmniKinematics, integrate_pose
 from amr_mqtt_bridge.time_sync import TimeSync
 
 
@@ -74,6 +74,22 @@ def test_omni_x_configuration_signs():
     assert kin.inverse(1.0, 0.0, 0.0) == pytest.approx([-s, -s, s, s])
     # Giro puro: todas iguales (L wz / r).
     assert kin.inverse(0.0, 0.0, 1.0) == pytest.approx([5.0] * 4)
+
+
+def test_mecanum_roundtrip_and_signs():
+    r, lx, ly = 0.05, 0.15, 0.2
+    kin = MecanumKinematics(r, lx, ly)
+    rng = random.Random(4)
+    for _ in range(100):
+        v = (rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-2, 2))
+        assert kin.forward(kin.inverse(*v)) == pytest.approx(v, abs=1e-9)
+    # Mismos valores que amr_odom/tests/host_test.c. Orden fl, rl, rr, fr.
+    assert kin.inverse(1.0, 0.0, 0.0) == pytest.approx([20.0] * 4)
+    assert kin.inverse(0.0, 1.0, 0.0) == pytest.approx([-20.0, 20.0, -20.0, 20.0])
+    k = (lx + ly) / r
+    assert kin.inverse(0.0, 0.0, 1.0) == pytest.approx([-k, -k, k, k])
+    with pytest.raises(ValueError):
+        MecanumKinematics(r, 0.0, ly)
 
 
 def test_integrate_pose_circle():
