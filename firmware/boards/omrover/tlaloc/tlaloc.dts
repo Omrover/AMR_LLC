@@ -109,8 +109,9 @@
 	status = "okay";
 };
 
-/* GIM6010-8 a 1 Mbit/s. VERIFICAR: pines EN/STB del TJA1043 (si van al MCU,
- * agregar un nodo can-transceiver-gpio y "phys"). */
+/* GIM6010-8 a 1 Mbit/s. EN/STB del TJA1043 no los maneja el MCU (el .mex de
+ * la FRDM-A solo rutea TX/RX y el CAN ya funciona así). Si algún día no hay
+ * tráfico, revisar que EN y STB_N estén en alto (modo normal). */
 &flexcan0 {
 	pinctrl-0 = <&flexcan0_default>;
 	pinctrl-names = "default";
@@ -204,12 +205,15 @@
 	pinctrl-names = "default";
 	status = "okay";
 
-	/* VERIFICAR la dirección (straps PHYAD del KSZ8091; 0 por defecto). El
-	 * driver KSZ8081 es compatible a nivel de registros con el KSZ8091RNA. */
+	/* Dirección por strap CRS_DV/PHYAD[1:0] del KSZ8091RNA: pull-down
+	 * interno = 0 (el .mex no la fija). Si no hay enlace, probar reg = <3>.
+	 * El driver KSZ8081 es compatible a nivel de registros con el KSZ8091RNA.
+	 * ENET_RESET (PTE21, activo bajo) según el .mex. */
 	phy: ethernet-phy@0 {
 		compatible = "microchip,ksz8081";
 		reg = <0>;
 		microchip,interface-type = "rmii";
+		reset-gpios = <&gpioe_h 5 GPIO_ACTIVE_LOW>;
 		status = "okay";
 	};
 };

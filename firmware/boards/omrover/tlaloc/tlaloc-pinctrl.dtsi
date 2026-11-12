@@ -99,17 +99,18 @@
 	};
 
 	/*
-	 * Ethernet RMII hacia el KSZ8091RNA. VERIFICAR: el esquemático en .md no
-	 * conserva la página del MCU; estos son los pines RMII de referencia de NXP
-	 * para el S32K344 172 HDQFP (los mismos de la MR-CANHUBK3).
+	 * Ethernet RMII hacia el KSZ8091RNA, pines del .mex de la FRDM-A
+	 * (ethtest.xml, nov 2026). PTC0 recibe el REF_CLK de 50 MHz por la entrada
+	 * TX_CLK; PTC1 (RX_CLK de MII) está ruteado en el .mex y no estorba en RMII.
 	 */
 	emac0_default: emac0_default {
 		group1 {
-			pinmux = <PTC0_EMAC_MII_RMII_RXD0>,
-				 <PTC1_EMAC_MII_RMII_RXD1>,
-				 <PTC14_EMAC_MII_RMII_RX_ER>,
+			pinmux = <PTD9_EMAC_MII_RMII_RXD0>,
+				 <PTD8_EMAC_MII_RMII_RXD1>,
+				 <PTC16_EMAC_MII_RMII_RX_ER>,
 				 <PTC15_EMAC_MII_RMII_RX_DV>,
-				 <PTD6_EMAC_MII_RMII_TX_CLK>;
+				 <PTC0_EMAC_MII_RMII_TX_CLK>,
+				 <PTC1_EMAC_MII_RX_CLK>;
 			input-enable;
 		};
 
@@ -128,7 +129,7 @@
 		};
 
 		group2 {
-			pinmux = <PTE8_EMAC_MII_RMII_MDC>;
+			pinmux = <PTD17_EMAC_MII_RMII_MDC>;
 			output-enable;
 		};
 	};
