@@ -8,22 +8,19 @@
 void amr_drive_default_cfg(amr_drive_cfg_t *cfg)
 {
 	memset(cfg, 0, sizeof(*cfg));
-	/* Geometría medida (C:/Users/Ivani/routing, nov 2026): rueda omni de 6" y
-	 * ruedas en (+-Lx, +-Ly) = (+-0.1583, +-0.1734) m montadas a 45 deg. Con
-	 * tracción tangencial u_i = (-sin a_i, cos a_i) el brazo de palanca de wz es
-	 * Lx cos 45 + Ly sin 45 = (Lx + Ly) / sqrt(2) para las 4 ruedas. */
+	/* Geometría medida (C:/Users/Ivani/routing, nov 2026): ruedas mecanum de
+	 * 6" rectas, rodillos a 45 deg en X vistos desde arriba, en
+	 * (+-Lx, +-Ly) = (+-0.1583, +-0.1734) m. Brazo de palanca de wz: Lx + Ly.
+	 * Orden: fl (rueda 1), rl (2), rr (3), fr (4). */
 	cfg->wheel_radius = 0.0762f;
-	cfg->center_distance = 0.234548f;
-	cfg->angles_rad[0] = 0.785398163f; /* fl 45  (rueda 1) */
-	cfg->angles_rad[1] = 2.35619449f;  /* rl 135 (rueda 2) */
-	cfg->angles_rad[2] = 3.92699082f;  /* rr 225 (rueda 3) */
-	cfg->angles_rad[3] = 5.49778714f;  /* fr 315 (rueda 4) */
-	/* E6B2-CWZ 1000 PPR x4 en la salida del motorreductor; rueda:motor = 1:2.
-	 * VERIFICAR: una vuelta de rueda a mano debe sumar ~8000 cuentas. */
-	cfg->counts_per_rev = 8000.0f;
-	/* Límite de QPPS configurado en las RoboClaw: +-5000 -> 3.93 rad/s de rueda
-	 * (0.30 m/s en la superficie). Se deja un margen bajo ese límite. */
-	cfg->max_wheel_rad_s = 3.85f;
+	cfg->half_length = 0.1583f;
+	cfg->half_width = 0.1734f;
+	/* E6B2-CWZ de 500 PPR x4 montado en el eje de la rueda (instructions.md,
+	 * nov 2026): una vuelta de rueda = 1 del encoder = 2 del motor. */
+	cfg->counts_per_rev = 2000.0f;
+	/* Motor de 165 rpm -> 82.5 rpm de rueda = 8.64 rad/s (2750 QPPS), por
+	 * debajo del límite de 5000 QPPS de las RoboClaw. Margen del 10 %. */
+	cfg->max_wheel_rad_s = 7.7f;
 	cfg->lin_acc = 1.0f;
 	cfg->ang_acc = 3.0f;
 	cfg->rc_accel_qpps = 20000;
@@ -37,6 +34,9 @@ void amr_drive_default_cfg(amr_drive_cfg_t *cfg)
 	cfg->map[2] = (amr_wheel_map_t){1, 1, 1};
 	cfg->map[3] = (amr_wheel_map_t){0, 1, 1};
 	cfg->fault_after = 3;
+	/* Las RoboClaw vienen con 3 s; a 50 Hz de comandos, 0.5 s basta y detiene
+	 * las ruedas pronto si el MCU se cuelga (el FS26 lo reinicia aparte). */
+	cfg->rc_serial_timeout_ds = 5;
 }
 
 bool amr_drive_init(amr_drive_t *d, const amr_drive_cfg_t *cfg, roboclaw_t *rc)
@@ -53,7 +53,7 @@ bool amr_drive_init(amr_drive_t *d, const amr_drive_cfg_t *cfg, roboclaw_t *rc)
 			return false;
 		}
 	}
-	return amr_omni_init(&d->kin, cfg->wheel_radius, cfg->center_distance, cfg->angles_rad);
+	return amr_mecanum_init(&d->kin, cfg->wheel_radius, cfg->half_length, cfg->half_width);
 }
 
 static float ramp(float value, float target, float step)
@@ -97,6 +97,9 @@ static void mark(amr_drive_t *d, int rc_index, bool ok)
 {
 	uint32_t bit = rc_index == 0 ? AMR_DRIVE_FAULT_RC0 : AMR_DRIVE_FAULT_RC1;
 
+	if (!ok) {
+		d->timeout_set[rc_index] = false;
+	}
 	if (ok) {
 		d->fail_count[rc_index] = 0;
 		d->faults &= ~bit;
@@ -143,6 +146,12 @@ void amr_drive_step(amr_drive_t *d, float vx, float vy, float wz, float dt,
 	meas->cmd_wz = d->wz;
 
 	for (int r = 0; r < 2; r++) {
+		/* Se programa (y re-programa tras un hueco: la RoboClaw pudo
+		 * reiniciarse y volver a su valor de EEPROM) antes de mover. */
+		if (d->cfg.rc_serial_timeout_ds > 0U && !d->timeout_set[r]) {
+			d->timeout_set[r] = rc_set_serial_timeout(d->rc, d->cfg.rc_addr[r],
+								  d->cfg.rc_serial_timeout_ds) == RC_OK;
+		}
 		rc_status_t st = rc_speed_accel_m1m2(d->rc, d->cfg.rc_addr[r], d->cfg.rc_accel_qpps,
 						     speed[r][0], speed[r][1]);
 		rc_status_t se = rc_read_encoders(d->rc, d->cfg.rc_addr[r], &enc[r][0], &enc[r][1]);
@@ -162,7 +171,7 @@ void amr_drive_step(amr_drive_t *d, float vx, float vy, float wz, float dt,
 		float drad = (float)delta * (float)m->sign * TWO_PI_F / d->cfg.counts_per_rev;
 
 		d->enc_prev[i] = now;
-		d->wheel_pos[i] += drad;
+		d->wheel_pos[i] += (double)drad;
 		meas->wheel_pos[i] = (float)d->wheel_pos[i];
 		meas->wheel_vel[i] = (d->enc_valid && dt > 0.0f) ? drad / dt : 0.0f;
 	}

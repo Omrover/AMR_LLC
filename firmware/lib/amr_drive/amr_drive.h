@@ -36,8 +36,8 @@ typedef struct {
 
 typedef struct {
 	float wheel_radius;          /* m */
-	float center_distance;       /* m */
-	float angles_rad[AMR_OMNI_WHEELS];
+	float half_length;           /* m, centro -> eje de ruedas en x (mecanum) */
+	float half_width;            /* m, centro -> plano medio de la rueda en y */
 	float counts_per_rev;        /* cuentas de encoder por vuelta de RUEDA (PPR*4*reducción) */
 	float max_wheel_rad_s;       /* saturación por rueda */
 	float lin_acc;               /* m/s^2 rampa del cuerpo */
@@ -46,6 +46,7 @@ typedef struct {
 	uint8_t rc_addr[2];          /* 128, 129 */
 	amr_wheel_map_t map[AMR_OMNI_WHEELS];
 	uint8_t fault_after;         /* fallas consecutivas para marcar la RoboClaw */
+	uint8_t rc_serial_timeout_ds; /* timeout Packet Serial a programar (0 = no tocar) */
 } amr_drive_cfg_t;
 
 typedef struct {
@@ -66,6 +67,7 @@ typedef struct {
 	bool enc_valid;
 	double wheel_pos[AMR_OMNI_WHEELS];
 	uint8_t fail_count[2];
+	bool timeout_set[2];                 /* rc_serial_timeout_ds aceptado */
 	uint32_t faults;
 	uint32_t last_status[2];
 } amr_drive_t;

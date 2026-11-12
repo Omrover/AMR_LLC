@@ -48,7 +48,7 @@ static void test_forward_motion(void)
 	double w_fl;
 
 	rig_init(&r);
-	w_fl = -sin(M_PI / 4) * 0.3 / r.cfg.wheel_radius; /* rad/s */
+	w_fl = 0.3 / r.cfg.wheel_radius; /* rad/s: mecanum, todas ruedan hacia +x */
 	CHECK(amr_drive_init(&r.drive, &r.cfg, &r.rc));
 	run(&r, 0.3f, 0.0f, 0.0f, 2.0, &m);
 	CHECK(m.valid);
@@ -58,9 +58,9 @@ static void test_forward_motion(void)
 	/* fl = RoboClaw 128 M1: QPPS = w * counts_per_rev / 2pi */
 	CHECK(NEAR(r.sim.dev[0].target[0], w_fl * r.cfg.counts_per_rev / (2 * M_PI), 1.0));
 	/* fr = RoboClaw 128 M2, rl = 129 M1, rr = 129 M2 (cableado de routing) */
-	CHECK(NEAR(r.sim.dev[0].target[1], -w_fl * r.cfg.counts_per_rev / (2 * M_PI), 1.0));
+	CHECK(NEAR(r.sim.dev[0].target[1], w_fl * r.cfg.counts_per_rev / (2 * M_PI), 1.0));
 	CHECK(NEAR(r.sim.dev[1].target[0], w_fl * r.cfg.counts_per_rev / (2 * M_PI), 1.0));
-	CHECK(NEAR(r.sim.dev[1].target[1], -w_fl * r.cfg.counts_per_rev / (2 * M_PI), 1.0));
+	CHECK(NEAR(r.sim.dev[1].target[1], w_fl * r.cfg.counts_per_rev / (2 * M_PI), 1.0));
 	CHECK(NEAR(m.wheel_vel[0], w_fl, 0.2));
 	CHECK(r.drive.faults == 0);
 }
@@ -96,8 +96,8 @@ static void test_sign_mapping(void)
 	r.cfg.map[0].sign = -1; /* motor fl montado invertido */
 	amr_drive_init(&r.drive, &r.cfg, &r.rc);
 	run(&r, 0.3f, 0.0f, 0.0f, 2.0, &m);
-	CHECK(r.sim.dev[0].target[0] > 0.0);         /* el motor gira al revés... */
-	CHECK(m.wheel_vel[0] < 0.0f);                /* ...pero la rueda reporta su convención */
+	CHECK(r.sim.dev[0].target[0] < 0.0);         /* el motor gira al revés... */
+	CHECK(m.wheel_vel[0] > 0.0f);                /* ...pero la rueda reporta su convención */
 	CHECK(NEAR(m.vx, 0.3, 0.02));
 }
 
@@ -111,7 +111,9 @@ static void test_rotation(void)
 	run(&r, 0.0f, 0.0f, 1.0f, 2.0, &m);
 	CHECK(NEAR(m.wz, 1.0, 0.05));
 	for (int i = 0; i < 4; i++) {
-		CHECK(NEAR(m.wheel_vel[i], r.cfg.center_distance / r.cfg.wheel_radius, 0.2));
+		/* CCW: lado izquierdo (fl, rl) hacia atrás, derecho (rr, fr) hacia adelante */
+		double w = (r.cfg.half_length + r.cfg.half_width) / r.cfg.wheel_radius;
+		CHECK(NEAR(m.wheel_vel[i], i < 2 ? -w : w, 0.2));
 	}
 }
 
@@ -164,6 +166,33 @@ static void test_stop(void)
 	CHECK(r.drive.vx == 0.0f);
 }
 
+static void test_serial_timeout(void)
+{
+	rig_t r;
+	amr_drive_meas_t m;
+
+	rig_init(&r);
+	amr_drive_init(&r.drive, &r.cfg, &r.rc);
+	CHECK(r.sim.dev[0].serial_timeout_ds == 30); /* valor de fábrica/EEPROM */
+	run(&r, 0.3f, 0.0f, 0.0f, 0.5, &m);
+	CHECK(r.sim.dev[0].serial_timeout_ds == 5 && r.sim.dev[1].serial_timeout_ds == 5);
+	CHECK(r.sim.dev[0].timeouts == 0 && r.sim.dev[1].timeouts == 0);
+	/* MCU colgado: dejan de llegar tramas y la RoboClaw frena sola en 0.5 s. */
+	for (int i = 0; i < 30; i++) {
+		rc_sim_step(&r.sim, 0.02);
+	}
+	CHECK(r.sim.dev[0].target[0] == 0.0 && r.sim.dev[1].target[1] == 0.0);
+	CHECK(r.sim.dev[0].timeouts == 1 && r.sim.dev[1].timeouts == 1);
+	/* La 129 se reinicia (vuelve a 3 s); al reaparecer se reprograma. */
+	r.sim.dev[1].present = false;
+	run(&r, 0.3f, 0.0f, 0.0f, 0.1, &m);
+	r.sim.dev[1].present = true;
+	r.sim.dev[1].serial_timeout_ds = 30;
+	run(&r, 0.3f, 0.0f, 0.0f, 0.1, &m);
+	CHECK(r.sim.dev[1].serial_timeout_ds == 5);
+	CHECK(r.drive.faults == 0);
+}
+
 static void test_invalid_cfg(void)
 {
 	rig_t r;
@@ -185,6 +214,7 @@ int main(void)
 	test_faults();
 	test_encoder_wrap();
 	test_stop();
+	test_serial_timeout();
 	test_invalid_cfg();
 	if (failures == 0) {
 		printf("amr_drive: PASSED (0 failures)\n");
