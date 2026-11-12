@@ -10,7 +10,7 @@ Firmware de la Tlaloc (FRDM-A-S32K344). Habla el contrato MQTT v1
 | Gripper | Servo PWM 50 Hz + ACS712 | eMIOS1 ch10 PTA27, ADC0 precisión ch0 PTD1 |
 | Brazo (M5) | 4 GIM6010-8 | FlexCAN0 RX PTA6 / TX PTA7 |
 | SBC | FS26 (watchdog) | LPSPI0 PCS0 PTB0, SOUT PTB1, SCK PTC8, SIN PTC9, INTB PTE18 (WKPU) |
-| Red | KSZ8091RNA RMII → `eno1` de la NUC | EMAC0 (pines a VERIFICAR) |
+| Red | KSZ8091RNA RMII → `eno1` de la NUC | EMAC0 (pines del `.mex`), reset PHY PTE21 |
 | Consola | OpenSDA | LPUART6 RX PTA15 / TX PTA16, 115200 |
 
 ## Estructura
@@ -24,7 +24,7 @@ src/hal_tlaloc.c        drivers Zephyr de la Tlaloc
 src/hal_sim.c           native_sim con RoboClaw y BNO080 simuladas byte a byte
 tests/host_test.c       lazo cerrado del núcleo en host (lo corre lib/run_host_tests.sh)
 ../lib/                 roboclaw, amr_drive, bno08x, amr_contract (+ simuladores)
-../../../AMR_localization/amr_odom   cinemática omni X + EKF
+../../../AMR_localization/amr_odom   cinemática mecanum + EKF
 ../boards/omrover/tlaloc             board out-of-tree
 ```
 
@@ -69,30 +69,51 @@ Opciones útiles (`-- -DCONFIG_...=...` o `prj.conf`):
    dirección PHY (`tlaloc.dts`).
 3. **Encoders sin motores** (`-DCONFIG_TLALOC_ALLOW_MOTION=n`): empujar el robot
    1.00 m hacia adelante con cinta métrica. `/odom` debe marcar x ≈ 1.00.
-   Si marca 0.5 o 2.0, la relación 1:2 está al revés: `TLALOC_COUNTS_PER_REV`
-   = 4000 o 16000.
-4. **Signos de ruedas, con las ruedas en el aire.** Publicar `wz = +0.3`. Cada
-   rueda debe girar en el sentido que, por sí sola, haría rotar al robot
-   antihorario visto desde arriba. La que gire al revés lleva
-   `TLALOC_SIGN_WHEELn = -1`. Si la rueda se dispara o vibra, el problema es el
+   Si marca 0.5 o 2.0, `TLALOC_COUNTS_PER_REV` (2000) está mal por la
+   relación 1:2: probar 1000 o 4000.
+4. **Signos de ruedas, con las ruedas en el aire.** Publicar `vx = +0.1`: las
+   cuatro ruedas mecanum deben girar como si el robot avanzara. La que gire al
+   revés lleva `TLALOC_SIGN_WHEELn = -1`. Luego `wz = +0.3`: las del lado
+   izquierdo (1 y 2) hacia atrás y las del derecho (3 y 4) hacia adelante. Si la rueda se dispara o vibra, el problema es el
    PID de la RoboClaw (encoder invertido respecto al motor), no el firmware.
 5. **En el piso, a baja velocidad.** `vx = +0.1` avanza, `vy = +0.1` va a la
-   izquierda, `wz = +0.3` gira antihorario.
+   izquierda, `wz = +0.3` gira antihorario. Si `vy` va a la derecha o el robot
+   gira al pedir `vy`, los rodillos están en "O" y no en "X" vistos desde
+   arriba: intercambiar las ruedas de cada lado (fl con rl y fr con rr).
 6. **IMU.** Girando antihorario, `/imu/data` debe dar `angular_velocity.z > 0`.
    Si no, `TLALOC_IMU_Z_DOWN=y`. Una vuelta completa a mano debe dar Δyaw ≈ 2π
    en `/odom`.
 7. **Gripper.** Revisar en la consola el cero del ACS712 y ajustar los pulsos
    abierto/cerrado del servo.
+8. **Brazo (CAN, GIM6010-8 en las direcciones 1 a 4).** Con el brazo apoyado o
+   sostenido, sin `enable`: `llc/arm` debe mostrar `fault` en 0 (255 = esa junta
+   no responde: revisar CANH/CANL, la terminación de 120 Ω y la dirección del
+   motor). Mover cada junta a mano y anotar `pos`: confirma el sentido y cuántos
+   counts da una vuelta de la junta (16384 si es por vuelta de salida). Apagar y
+   encender en otra posición y comparar: así se ve si la posición de 0xA4 es
+   absoluta o arranca en cero. Luego `enable` (no debe moverse nada) y un `goal`
+   pequeño de una sola junta con `acc`/`dec` bajos (50 rpm/s).
 
 ## Parámetros físicos (C:/Users/Ivani/routing, nov 2026)
 
-- Rueda omni de 6" → r = 0.0762 m. Ruedas en (±0.1583, ±0.1734) m a 45°, por lo
-  que el brazo de palanca de wz es L = (Lx + Ly)/√2 = 0.2345 m.
-- E6B2-CWZ de 1000 PPR ×4 en la salida del motorreductor, rueda:motor = 1:2:
-  8000 cuentas por vuelta de rueda (a verificar en el paso 3).
-- QPPS máximo 5000 → 3.93 rad/s de rueda → 0.30 m/s en la superficie. Eso da
-  vx máx ≈ 0.42 m/s (eje puro) y wz máx ≈ 1.27 rad/s. Usar estos límites en
-  Nav2 (M4).
-- RoboClaw con serial timeout de 3 s: se recomienda 0.5 s. El firmware envía a
-  50 Hz y, si el MCU muere, las ruedas se detendrían en medio segundo en vez de
-  tres.
+- Ruedas mecanum de 6" rectas, con rodillos a 45° en "X" vistos desde arriba →
+  r = 0.0762 m. Ruedas en (±Lx, ±Ly) = (±0.1583, ±0.1734) m, por lo que el
+  brazo de palanca de wz es Lx + Ly = 0.3317 m.
+- E6B2-CWZ de 500 PPR ×4 en el eje de la rueda (una vuelta de rueda = una del
+  encoder = dos del motor): 2000 cuentas por vuelta de rueda.
+- Motor de 165 rpm → 82.5 rpm de rueda = 8.64 rad/s ≈ 2750 QPPS. Manda sobre
+  el límite de 5000 QPPS de las RoboClaw. Con 10 % de margen, 7.7 rad/s de
+  rueda: vx o vy máx ≈ 0.59 m/s (eje puro) y wz máx ≈ 1.77 rad/s. Nav2 usa límites
+  más bajos (M4).
+- **QPPS de las RoboClaw.** Con 2000 cuentas/vuelta, la velocidad máxima real
+  es ~2750 QPPS, no 5000. El PID de velocidad usa el QPPS como término de
+  avance: volver a medirlo en Motion Studio (motor al 100 % con la rueda en el
+  aire) y reajustar el PID con ese valor.
+- Timeout serie de las RoboClaw: el firmware programa 0.5 s al arrancar y tras
+  cada reconexión (`TLALOC_RC_SERIAL_TIMEOUT_DS`, comando 14). Si el MCU deja
+  de enviar, las ruedas paran en medio segundo.
+- Ethernet: pines RMII y reset del PHY (PTE21) tomados del `.mex` de la FRDM-A.
+  Dirección del PHY = 0 (strap por defecto); si no hay enlace, probar 3.
+- ACS712-05B (185 mV/A) con divisor 2/3 hacia el ADC de 3.3 V: 10k en serie y
+  20k a GND (el ACS712 pide ≥ 4.7k de carga). Si el divisor es 1/2 (10k/10k),
+  `TLALOC_ACS712_MV_PER_A_X10=925`.
