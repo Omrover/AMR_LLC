@@ -17,7 +17,7 @@ import threading
 import time
 
 from . import protocol as p
-from .omni import OmniKinematics, integrate_pose
+from .omni import MecanumKinematics, integrate_pose
 
 
 class Trapezoid:
@@ -59,10 +59,11 @@ class Trapezoid:
 class EmulatedMcu:
     COUNTS_PER_REV = 16384
 
-    def __init__(self, wheel_radius=0.0762, center_distance=0.2345, battery_volt=25.0,
+    def __init__(self, wheel_radius=0.0762, half_length=0.1583, half_width=0.1734,
+                 battery_volt=25.0,
                  drain_v_per_s=0.002, grip_object_at=0.6, arm_vmax_rpm=30.0,
                  noise=0.0, boot_id=None, clock=time.monotonic):
-        self.kin = OmniKinematics(wheel_radius, center_distance)
+        self.kin = MecanumKinematics(wheel_radius, half_length, half_width)
         self.boot_id = boot_id or secrets.token_hex(8)
         self.clock = clock
         self.t0 = clock()
@@ -358,12 +359,14 @@ def main(argv=None):
     ap.add_argument('--grip-object-at', type=float, default=0.6,
                     help='posición 0..1 donde el gripper toca un objeto (<0 sin objeto)')
     ap.add_argument('--wheel-radius', type=float, default=0.0762)
-    ap.add_argument('--center-distance', type=float, default=0.2345)
+    ap.add_argument('--half-length', type=float, default=0.1583)
+    ap.add_argument('--half-width', type=float, default=0.1734)
     ap.add_argument('--noise', type=float, default=0.0)
     ap.add_argument('--duration', type=float, default=None)
     args, _ = ap.parse_known_args(argv)   # tolera --ros-args al lanzarse con ros2 run
 
-    mcu = EmulatedMcu(wheel_radius=args.wheel_radius, center_distance=args.center_distance,
+    mcu = EmulatedMcu(wheel_radius=args.wheel_radius, half_length=args.half_length,
+                      half_width=args.half_width,
                       battery_volt=args.battery_volt, drain_v_per_s=args.drain,
                       grip_object_at=args.grip_object_at if args.grip_object_at >= 0 else None,
                       noise=args.noise)
