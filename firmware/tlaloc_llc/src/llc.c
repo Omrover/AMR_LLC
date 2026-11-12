@@ -18,6 +18,8 @@ void llc_default_cfg(llc_cfg_t *cfg)
 	amr_drive_default_cfg(&cfg->drive);
 	amr_ekf_default_cfg(&cfg->ekf);
 	grip_default_cfg(&cfg->grip);
+	gim_arm_default_cfg(&cfg->arm);
+	cfg->can_timeout_ms = 3;      /* respuesta de 8 bytes a 1 Mbps: ~0.2 ms */
 	cfg->rc_timeout_ms = 10;      /* respuesta de 10 bytes a 115200: ~1 ms */
 	cfg->rc_retries = 1;
 	cfg->imu_timeout_ms = 200;
@@ -26,7 +28,8 @@ void llc_default_cfg(llc_cfg_t *cfg)
 	cfg->slow_period_ms = 1000;
 }
 
-bool llc_init(llc_t *l, const llc_cfg_t *cfg, const rc_transport_t *rc_t, const llc_io_t *io)
+bool llc_init(llc_t *l, const llc_cfg_t *cfg, const rc_transport_t *rc_t,
+	      const gim_transport_t *can_t, const llc_io_t *io)
 {
 	memset(l, 0, sizeof(*l));
 	l->cfg = *cfg;
@@ -35,6 +38,11 @@ bool llc_init(llc_t *l, const llc_cfg_t *cfg, const rc_transport_t *rc_t, const 
 	l->drive_ok = amr_drive_init(&l->drive, &cfg->drive, &l->rc);
 	amr_ekf_init(&l->ekf, &cfg->ekf);
 	grip_init(&l->grip, &cfg->grip);
+	l->arm_ok = can_t != NULL && can_t->send != NULL && can_t->recv != NULL;
+	if (l->arm_ok) {
+		gim_init(&l->can, can_t, cfg->can_timeout_ms);
+	}
+	gim_arm_init(&l->arm, &l->can, &cfg->arm);
 	amr_vel_wd_init(&l->wd);
 	l->batt_v = -1.0f;
 	l->logic_v = -1.0f;
@@ -86,14 +94,29 @@ static amr_ack_result_t execute(llc_t *l, llc_cmd_topic_t topic, const any_cmd_t
 				const char **msg)
 {
 	switch (topic) {
-	case LLC_CMD_ARM:
-		/* Brazo CAN (GIM6010-8) pendiente de M5: solo se aceptan las
-		 * operaciones que no mueven nada. */
-		if (c->arm.op == AMR_ARM_DISABLE || c->arm.op == AMR_ARM_CLEAR) {
-			return AMR_ACK_OK;
+	case LLC_CMD_ARM: {
+		static const gim_arm_op_t ops[] = {
+			[AMR_ARM_GOAL] = GIM_ARM_OP_GOAL,     [AMR_ARM_ENABLE] = GIM_ARM_OP_ENABLE,
+			[AMR_ARM_DISABLE] = GIM_ARM_OP_DISABLE, [AMR_ARM_CLEAR] = GIM_ARM_OP_CLEAR,
+			[AMR_ARM_HOME] = GIM_ARM_OP_HOME,
+		};
+
+		if (!l->arm_ok) {
+			if (c->arm.op == AMR_ARM_DISABLE || c->arm.op == AMR_ARM_CLEAR) {
+				return AMR_ACK_OK; /* no mueven nada */
+			}
+			*msg = "sin bus CAN del brazo";
+			return AMR_ACK_REJECTED;
 		}
-		*msg = "brazo CAN no disponible en este firmware";
-		return AMR_ACK_REJECTED;
+		if ((unsigned int)c->arm.op >= sizeof(ops) / sizeof(ops[0])) {
+			*msg = "op desconocida";
+			return AMR_ACK_REJECTED;
+		}
+		return gim_arm_command(&l->arm, ops[c->arm.op], c->arm.pos, c->arm.acc, c->arm.dec,
+				       msg)
+			       ? AMR_ACK_OK
+			       : AMR_ACK_REJECTED;
+	}
 	case LLC_CMD_GRIPPER:
 		if (l->estop) {
 			*msg = "e-stop activo";
@@ -175,6 +198,13 @@ static void update_faults(llc_t *l, uint32_t now_ms)
 	}
 	if (l->batt_valid && l->batt_v < l->cfg.battery_critical_v) {
 		f |= AMR_FAULT_BATTERY_CRITICAL;
+	}
+	f &= ~(uint32_t)(AMR_FAULT_CAN_BUS | AMR_FAULT_ARM_MOTOR);
+	if (l->arm_ok && gim_arm_bus_fault(&l->arm)) {
+		f |= AMR_FAULT_CAN_BUS;
+	}
+	if (l->arm_ok && gim_arm_motor_fault(&l->arm)) {
+		f |= AMR_FAULT_ARM_MOTOR;
 	}
 	l->faults = f;
 }
@@ -264,6 +294,11 @@ void llc_control_step(llc_t *l, uint32_t now_ms, bool link_ok)
 			l->prev_fail[r] = l->drive.fail_count[r];
 		}
 	}
+	if (l->arm_ok) {
+		/* E-stop: el brazo se queda donde está (con 0xCF caería por gravedad). */
+		gim_arm_set_hold(&l->arm, l->estop);
+		gim_arm_step(&l->arm, now_ms);
+	}
 	slow_step(l, now_ms);
 	if (l->stepped) {
 		fuse(l, now_ms, dt);
@@ -329,6 +364,17 @@ int llc_telemetry(const llc_t *l, llc_tel_t kind, const amr_hdr_t *hdr, char *bu
 		amr_arm_t m;
 
 		memset(&m, 0, sizeof(m));
+		m.enabled = l->arm.enabled;
+		for (int i = 0; i < AMR_N_JOINTS && i < GIM_ARM_JOINTS; i++) {
+			const gim_joint_t *j = &l->arm.j[i];
+
+			m.pos[i] = j->pos;
+			m.vel_rpm[i] = j->vel_rpm;
+			m.cur_a[i] = j->cur_a;
+			m.temp_c[i] = j->temp_c;
+			m.in_pos[i] = gim_arm_in_pos(&l->arm, i);
+			m.fault[i] = j->online ? j->fault : 0xFF; /* 0xFF: sin respuesta por CAN */
+		}
 		m.grip_pos = l->grip.pos;
 		m.grip_cur_a = l->grip.cur_a;
 		m.grasped = l->grip.grasped;

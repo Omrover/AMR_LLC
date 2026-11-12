@@ -2,13 +2,13 @@
  * Núcleo del controlador de bajo nivel de Tlaloc (C99 portable, sin Zephyr).
  *
  * Integra el contrato MQTT v1 (amr_contract), la tracción con 2 RoboClaw
- * (amr_drive), el EKF de odometría (amr_odom), la BNO080 (bno08x) y el
- * gripper. No hace I/O de red ni crea hilos: main.c llama a estas funciones
+ * (amr_drive), el EKF de odometría (amr_odom), la BNO080 (bno08x), el brazo
+ * de 4 GIM6010-8 por CAN (gim_arm) y el gripper. No hace I/O de red ni crea hilos: main.c llama a estas funciones
  * desde sus hilos con los locks adecuados, y tests/host_test.c las ejecuta en
  * host con los simuladores de RoboClaw y BNO080.
  *
  * Hilos en el firmware (ver main.c):
- *   control (20 ms): llc_control_step()  -> RoboClaw, EKF, gripper, batería
+ *   control (20 ms): llc_control_step()  -> RoboClaw, CAN del brazo, EKF, gripper, batería
  *   imu    (INT/5 ms): llc_imu_service() -> I2C BNO080; llc_imu_sample() con el lock
  *   main   (MQTT):   llc_command(), llc_telemetry()
  */
@@ -23,6 +23,7 @@
 #include "amr_drive.h"
 #include "bno08x.h"
 #include "ekf.h"
+#include "gim_arm.h"
 #include "gripper.h"
 #include "roboclaw.h"
 
@@ -42,6 +43,8 @@ typedef struct {
 	amr_drive_cfg_t drive;
 	amr_ekf_cfg_t ekf;
 	grip_cfg_t grip;
+	gim_arm_cfg_t arm;
+	uint32_t can_timeout_ms;     /* por transacción con un GIM6010-8 */
 	uint32_t rc_timeout_ms;      /* por transacción RoboClaw */
 	uint8_t rc_retries;
 	uint32_t imu_timeout_ms;     /* sin datos -> falla IMU, EKF solo con ruedas */
@@ -89,6 +92,9 @@ typedef struct {
 	amr_drive_meas_t meas;
 	amr_ekf_t ekf;
 	grip_t grip;
+	gim_bus_t can;
+	gim_arm_t arm;
+	bool arm_ok;                 /* hay transporte CAN */
 	amr_vel_wd_t wd;
 	amr_seq_t seq[LLC_CMD_COUNT];
 	bool estop;
@@ -116,8 +122,10 @@ typedef struct {
 } llc_t;
 
 void llc_default_cfg(llc_cfg_t *cfg);
-/* false si la configuración es inválida (la base queda detenida). */
-bool llc_init(llc_t *l, const llc_cfg_t *cfg, const rc_transport_t *rc_t, const llc_io_t *io);
+/* false si la configuración es inválida (la base queda detenida). can_t puede
+ * ser NULL: sin brazo, cmd/arm se rechaza salvo disable/clear. */
+bool llc_init(llc_t *l, const llc_cfg_t *cfg, const rc_transport_t *rc_t,
+	      const gim_transport_t *can_t, const llc_io_t *io);
 
 /* Procesa un comando del contrato. Escribe en ack el JSON de llc/ack cuando el
  * comando lo requiere y devuelve su longitud (0 si no hay ack, p. ej. cmd/vel). */

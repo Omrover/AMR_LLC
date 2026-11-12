@@ -265,6 +265,16 @@ rc_status_t rc_reset_encoders(roboclaw_t *rc, uint8_t addr)
 	return rc_write(rc, addr, RC_CMD_RESET_ENCODERS, NULL, 0);
 }
 
+rc_status_t rc_set_serial_timeout(roboclaw_t *rc, uint8_t addr, uint8_t tenths)
+{
+	return rc_write(rc, addr, RC_CMD_SET_SERIAL_TIMEOUT, &tenths, 1);
+}
+
+rc_status_t rc_read_serial_timeout(roboclaw_t *rc, uint8_t addr, uint8_t *tenths)
+{
+	return rc_read(rc, addr, RC_CMD_READ_SERIAL_TIMEOUT, tenths, 1);
+}
+
 rc_status_t rc_read_version(roboclaw_t *rc, uint8_t addr, char *out, size_t size)
 {
 	uint8_t req[2] = {addr, RC_CMD_READ_VERSION};

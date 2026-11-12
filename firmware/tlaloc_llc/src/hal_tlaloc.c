@@ -6,12 +6,14 @@
  *   Servo:    eMIOS1 ch10 (PTA27), 50 Hz
  *   ACS712:   ADC0 precisión ch0 (PTD1), 14 bits, promedio de 4
  *   FS26:     watchdog por LPSPI0 (driver nxp,fs26-wdog)
+ *   Brazo:    FlexCAN0 (zephyr,canbus) a 1 Mbps, 4 GIM6010-8
  */
 #include <errno.h>
 #include <string.h>
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/can.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/pwm.h>
@@ -79,7 +81,7 @@ static void rc_uart_isr(const struct device *dev, void *user_data)
 	}
 }
 
-static int rc_write(void *ctx, const uint8_t *buf, size_t n)
+static int uart_rc_write(void *ctx, const uint8_t *buf, size_t n)
 {
 	ARG_UNUSED(ctx);
 
@@ -97,7 +99,7 @@ static int rc_write(void *ctx, const uint8_t *buf, size_t n)
 	return 0;
 }
 
-static int rc_read(void *ctx, uint8_t *buf, size_t n, uint32_t timeout_ms)
+static int uart_rc_read(void *ctx, uint8_t *buf, size_t n, uint32_t timeout_ms)
 {
 	ARG_UNUSED(ctx);
 	int64_t deadline = k_uptime_get() + timeout_ms;
@@ -132,7 +134,7 @@ static void rc_flush_rx(void *ctx)
 
 rc_transport_t hal_roboclaw_transport(void)
 {
-	rc_transport_t t = {rc_write, rc_read, rc_flush_rx, NULL};
+	rc_transport_t t = {uart_rc_write, uart_rc_read, rc_flush_rx, NULL};
 
 	return t;
 }
@@ -278,6 +280,89 @@ void hal_wdt_kick(uint32_t now_ms)
 
 /* ------------------------------------------------------------------- init */
 
+uint16_t hal_broker_port(void)
+{
+	return CONFIG_TLALOC_BROKER_PORT;
+}
+
+const char *hal_mqtt_prefix(void)
+{
+	return CONFIG_TLALOC_MQTT_PREFIX;
+}
+
+/* ---------------------------------------------------------------- CAN brazo */
+
+static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
+/* Solo IDs estándar 0x000-0x0FF: respuestas de los motores (ID = addr). El eco
+ * propio de las tramas 0x100|addr no pasa el filtro. */
+CAN_MSGQ_DEFINE(can_rx_q, 16);
+static bool can_ok;
+
+static int can_tx(void *ctx, uint16_t id, const uint8_t *data, uint8_t len)
+{
+	struct can_frame f = {0};
+
+	ARG_UNUSED(ctx);
+	if (len > 8U) {
+		return -EINVAL;
+	}
+	f.id = id;
+	f.dlc = can_bytes_to_dlc(len);
+	memcpy(f.data, data, len);
+	k_msgq_purge(&can_rx_q); /* una respuesta vieja no debe confirmar este comando */
+	return can_send(can_dev, &f, K_MSEC(5), NULL, NULL);
+}
+
+static int can_rx(void *ctx, uint16_t *id, uint8_t data[8], uint8_t *len, uint32_t timeout_ms)
+{
+	struct can_frame f;
+
+	ARG_UNUSED(ctx);
+	if (k_msgq_get(&can_rx_q, &f, K_MSEC(timeout_ms)) != 0) {
+		return 0;
+	}
+	*id = (uint16_t)f.id;
+	*len = can_dlc_to_bytes(f.dlc);
+	if (*len > 8U) {
+		*len = 8U;
+	}
+	memcpy(data, f.data, *len);
+	return 1;
+}
+
+gim_transport_t hal_can_transport(void)
+{
+	gim_transport_t t = {NULL, NULL, NULL};
+
+	if (can_ok) {
+		t.send = can_tx;
+		t.recv = can_rx;
+	}
+	return t;
+}
+
+static int can_setup(void)
+{
+	const struct can_filter filter = {.id = 0x000, .mask = 0x700, .flags = 0};
+	int rc;
+
+	if (!device_is_ready(can_dev)) {
+		return -ENODEV;
+	}
+	rc = can_set_bitrate(can_dev, 1000000);
+	if (rc == 0) {
+		rc = can_set_mode(can_dev, CAN_MODE_NORMAL);
+	}
+	if (rc == 0) {
+		rc = can_add_rx_filter_msgq(can_dev, &can_rx_q, &filter);
+		rc = rc < 0 ? rc : 0;
+	}
+	if (rc == 0) {
+		rc = can_start(can_dev);
+	}
+	return rc;
+}
+
 int hal_init(void)
 {
 	int rc;
@@ -317,6 +402,12 @@ int hal_init(void)
 	adc_ok = adc_is_ready_dt(&acs712) && adc_channel_setup_dt(&acs712) == 0;
 	if (!adc_ok) {
 		LOG_WRN("ADC del ACS712 no disponible: el gripper no detecta agarre");
+	}
+	rc = can_setup();
+	can_ok = rc == 0;
+	if (!can_ok) {
+		/* Sin CAN la base funciona igual; cmd/arm se rechaza. */
+		LOG_WRN("FlexCAN0 no disponible (%d): brazo deshabilitado", rc);
 	}
 	return 0;
 }

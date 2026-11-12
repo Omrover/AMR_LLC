@@ -27,7 +27,6 @@
 
 LOG_MODULE_REGISTER(tlaloc, LOG_LEVEL_INF);
 
-#define PREFIX CONFIG_TLALOC_MQTT_PREFIX
 #define CONTROL_PERIOD_MS 20
 #define TOPIC_MAX 64
 
@@ -36,6 +35,7 @@ static llc_imu_t imu;
 static K_MUTEX_DEFINE(core_lock);
 static atomic_t mqtt_up;
 static char boot_id[17];
+static char client_id[TOPIC_MAX];
 
 /* --------------------------------------------------------------------- hilos */
 
@@ -292,7 +292,7 @@ static int connect_broker(void)
 	int rc;
 
 	b4->sin_family = AF_INET;
-	b4->sin_port = htons(CONFIG_TLALOC_BROKER_PORT);
+	b4->sin_port = htons(hal_broker_port());
 	zsock_inet_pton(AF_INET, CONFIG_TLALOC_BROKER_ADDR, &b4->sin_addr);
 
 	rc = amr_fmt_lwt(lwt_payload, sizeof(lwt_payload));
@@ -308,8 +308,8 @@ static int connect_broker(void)
 	mqtt_client_init(&client);
 	client.broker = &broker;
 	client.evt_cb = mqtt_evt;
-	client.client_id.utf8 = (const uint8_t *)PREFIX "/llc";
-	client.client_id.size = strlen(PREFIX "/llc");
+	client.client_id.utf8 = (const uint8_t *)client_id;
+	client.client_id.size = strlen(client_id);
 	client.protocol_version = MQTT_VERSION_3_1_1;
 	client.clean_session = 1U;
 	client.keepalive = 5U;
@@ -406,15 +406,19 @@ int main(void)
 	llc_cfg_t cfg;
 	rc_transport_t rct;
 	bno_transport_t bnot;
+	gim_transport_t cant;
 	llc_io_t io;
 
+	const char *prefix = hal_mqtt_prefix();
+
 	for (int i = 0; i < LLC_CMD_COUNT; i++) {
-		snprintf(cmd_topics[i], TOPIC_MAX, "%s/%s", PREFIX, cmd_names[i]);
+		snprintf(cmd_topics[i], TOPIC_MAX, "%s/%s", prefix, cmd_names[i]);
 	}
 	for (int k = 0; k < LLC_TEL_COUNT; k++) {
-		snprintf(tel_topics[k], TOPIC_MAX, "%s/%s", PREFIX, tel_def[k].name);
+		snprintf(tel_topics[k], TOPIC_MAX, "%s/%s", prefix, tel_def[k].name);
 	}
-	snprintf(topic_ack, sizeof(topic_ack), "%s/llc/ack", PREFIX);
+	snprintf(topic_ack, sizeof(topic_ack), "%s/llc/ack", prefix);
+	snprintf(client_id, sizeof(client_id), "%s/llc", prefix);
 
 	if (hal_init() != 0) {
 		LOG_ERR("falló la inicialización del hardware: la base queda detenida");
@@ -426,8 +430,9 @@ int main(void)
 	app_config(&cfg);
 	rct = hal_roboclaw_transport();
 	bnot = hal_imu_transport();
+	cant = hal_can_transport();
 	io = hal_io();
-	if (!llc_init(&llc, &cfg, &rct, &io)) {
+	if (!llc_init(&llc, &cfg, &rct, &cant, &io)) {
 		LOG_ERR("configuración de tracción inválida: la base no se moverá");
 	}
 	llc_imu_init(&imu, &bnot);
@@ -435,10 +440,11 @@ int main(void)
 	k_thread_start(imu_tid);
 
 	LOG_INF("Tlaloc LLC: broker %s:%d prefijo %s, movimiento %s", CONFIG_TLALOC_BROKER_ADDR,
-		CONFIG_TLALOC_BROKER_PORT, PREFIX,
+		hal_broker_port(), prefix,
 		IS_ENABLED(CONFIG_TLALOC_ALLOW_MOTION) ? "HABILITADO" : "deshabilitado");
-	LOG_INF("ruedas: r=%.4f m L=%.4f m, %d cuentas/vuelta, max %.2f rad/s",
-		(double)cfg.drive.wheel_radius, (double)cfg.drive.center_distance,
+	LOG_INF("ruedas mecanum: r=%.4f m lx=%.4f m ly=%.4f m, %d cuentas/vuelta, max %.2f rad/s",
+		(double)cfg.drive.wheel_radius, (double)cfg.drive.half_length,
+		(double)cfg.drive.half_width,
 		(int)cfg.drive.counts_per_rev, (double)cfg.drive.max_wheel_rad_s);
 
 	while (true) {

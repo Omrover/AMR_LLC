@@ -17,7 +17,7 @@ else()
 endif()
 
 target_include_directories(app PRIVATE
-  src ${LIB}/amr_contract ${LIB}/amr_drive ${LIB}/roboclaw ${LIB}/bno08x ${ODOM})
+  src ${LIB}/amr_contract ${LIB}/amr_drive ${LIB}/roboclaw ${LIB}/bno08x ${LIB}/gim6010 ${ODOM})
 
 target_sources(app PRIVATE
   src/main.c
@@ -28,6 +28,8 @@ target_sources(app PRIVATE
   ${LIB}/amr_drive/amr_drive.c
   ${LIB}/roboclaw/roboclaw.c
   ${LIB}/bno08x/bno08x.c
+  ${LIB}/gim6010/gim6010.c
+  ${LIB}/gim6010/gim_arm.c
   ${ODOM}/omni.c
   ${ODOM}/ekf.c
 )
@@ -36,7 +38,8 @@ if(CONFIG_ARCH_POSIX)
   target_sources(app PRIVATE
     src/hal_sim.c
     ${LIB}/roboclaw/roboclaw_sim.c
-    ${LIB}/bno08x/bno08x_sim.c)
+    ${LIB}/bno08x/bno08x_sim.c
+    ${LIB}/gim6010/gim6010_sim.c)
 else()
   target_sources(app PRIVATE src/hal_tlaloc.c)
 endif()

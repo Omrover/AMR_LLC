@@ -13,9 +13,13 @@
 
 #include "app_config.h"
 #include "bno08x_sim.h"
+#include "gim6010_sim.h"
 #include "hal.h"
 #include "omni.h"
 #include "roboclaw_sim.h"
+
+#include "cmdline.h" /* opciones de línea de comandos de native_sim */
+#include "soc.h"
 
 LOG_MODULE_REGISTER(hal_sim, LOG_LEVEL_INF);
 
@@ -23,6 +27,7 @@ LOG_MODULE_REGISTER(hal_sim, LOG_LEVEL_INF);
 
 static K_MUTEX_DEFINE(sim_lock);
 static rc_sim_t rc;
+static gim_sim_t gim;
 static bno_sim_t bno;
 static rc_transport_t rc_inner;
 static bno_transport_t bno_inner;
@@ -31,6 +36,39 @@ static amr_omni_t kin;
 static double yaw;
 static float grip_pos_us = 1000.0f;
 static K_SEM_DEFINE(imu_sem, 0, 1);
+static int64_t sim_ticks;
+
+/* Integra la física hasta el instante actual (con sim_lock tomado). Se llama
+ * en cada transacción con las RoboClaw, no solo en el hilo de física: así un
+ * encoder leído refleja el tiempo transcurrido hasta la lectura, como en el
+ * hardware, y la velocidad medida por el núcleo no sufre aliasing entre el
+ * periodo del hilo de física y el del control. */
+static void sim_advance_locked(void)
+{
+	float w[AMR_OMNI_WHEELS], vx, vy, wz;
+	int64_t now = k_uptime_ticks();
+	double dt = (double)k_ticks_to_us_floor64((uint64_t)(now - sim_ticks)) * 1e-6;
+
+	if (!(dt > 0.0)) {
+		return;
+	}
+	sim_ticks = now;
+	if (dt > 0.05) {
+		dt = 0.05;
+	}
+	rc_sim_step(&rc, dt);
+	for (int i = 0; i < AMR_OMNI_WHEELS; i++) {
+		const amr_wheel_map_t *m = &geo.map[i];
+
+		w[i] = (float)(rc.dev[m->rc].speed[m->motor] * m->sign * 6.283185307179586 /
+			       (double)geo.counts_per_rev);
+	}
+	amr_omni_forward(&kin, w, &vx, &vy, &wz);
+	yaw += (double)wz * dt;
+	bno_sim_set_motion(&bno, (float)yaw, wz, 0.0f, 0.0f);
+	bno_sim_step(&bno, dt);
+	gim_sim_step(&gim, dt);
+}
 
 /* --------------------------------------------------------------- RoboClaw */
 
@@ -39,6 +77,7 @@ static int sim_rc_write(void *ctx, const uint8_t *buf, size_t n)
 	int r;
 
 	k_mutex_lock(&sim_lock, K_FOREVER);
+	sim_advance_locked();
 	r = rc_inner.write(ctx, buf, n);
 	k_mutex_unlock(&sim_lock);
 	return r;
@@ -51,8 +90,8 @@ static int sim_rc_read(void *ctx, uint8_t *buf, size_t n, uint32_t timeout_ms)
 	k_mutex_lock(&sim_lock, K_FOREVER);
 	r = rc_inner.read(ctx, buf, n, timeout_ms);
 	k_mutex_unlock(&sim_lock);
-	if (r != 0) {
-		k_msleep(timeout_ms); /* un timeout real también consume el tiempo */
+	if (r <= 0) {
+		k_msleep(timeout_ms); /* sin respuesta: un timeout real consume el tiempo */
 	}
 	return r;
 }
@@ -93,6 +132,44 @@ static int sim_imu_read(void *ctx, uint8_t *buf, size_t n)
 	r = bno_inner.read(ctx, buf, n);
 	k_mutex_unlock(&sim_lock);
 	return r;
+}
+
+/* ---------------------------------------------------------------- CAN brazo */
+
+static int sim_can_send(void *ctx, uint16_t id, const uint8_t *data, uint8_t len)
+{
+	gim_transport_t t = gim_sim_transport(&gim);
+	int r;
+
+	ARG_UNUSED(ctx);
+	k_mutex_lock(&sim_lock, K_FOREVER);
+	sim_advance_locked();
+	r = t.send(t.ctx, id, data, len);
+	k_mutex_unlock(&sim_lock);
+	return r;
+}
+
+static int sim_can_recv(void *ctx, uint16_t *id, uint8_t data[8], uint8_t *len,
+			uint32_t timeout_ms)
+{
+	gim_transport_t t = gim_sim_transport(&gim);
+	int r;
+
+	ARG_UNUSED(ctx);
+	k_mutex_lock(&sim_lock, K_FOREVER);
+	r = t.recv(t.ctx, id, data, len, timeout_ms);
+	k_mutex_unlock(&sim_lock);
+	if (r <= 0) {
+		k_msleep(timeout_ms); /* un timeout real consume el tiempo */
+	}
+	return r;
+}
+
+gim_transport_t hal_can_transport(void)
+{
+	gim_transport_t t = {sim_can_send, sim_can_recv, NULL};
+
+	return t;
 }
 
 bno_transport_t hal_imu_transport(void)
@@ -154,23 +231,12 @@ static void sim_thread(void *a, void *b, void *c)
 	ARG_UNUSED(a);
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
-	const double dt = SIM_PERIOD_MS * 1e-3;
-
+	k_mutex_lock(&sim_lock, K_FOREVER);
+	sim_ticks = k_uptime_ticks();
+	k_mutex_unlock(&sim_lock);
 	while (true) {
-		float w[AMR_OMNI_WHEELS], vx, vy, wz;
-
 		k_mutex_lock(&sim_lock, K_FOREVER);
-		rc_sim_step(&rc, dt);
-		for (int i = 0; i < AMR_OMNI_WHEELS; i++) {
-			const amr_wheel_map_t *m = &geo.map[i];
-
-			w[i] = (float)(rc.dev[m->rc].speed[m->motor] * m->sign * 6.283185307179586 /
-				       geo.counts_per_rev);
-		}
-		amr_omni_forward(&kin, w, &vx, &vy, &wz);
-		yaw += wz * dt;
-		bno_sim_set_motion(&bno, (float)yaw, wz, 0.0f, 0.0f);
-		bno_sim_step(&bno, dt);
+		sim_advance_locked();
 		k_mutex_unlock(&sim_lock);
 		k_sem_give(&imu_sem);
 		k_msleep(SIM_PERIOD_MS);
@@ -180,16 +246,44 @@ static void sim_thread(void *a, void *b, void *c)
 K_THREAD_DEFINE(sim_tid, 2048, sim_thread, NULL, NULL, NULL, K_PRIO_PREEMPT(1), 0,
 		K_TICKS_FOREVER);
 
+static uint32_t opt_port = CONFIG_TLALOC_BROKER_PORT;
+static char *opt_prefix;
+
+static void add_options(void)
+{
+	static struct args_struct_t opts[] = {
+		{.option = "broker-port", .name = "port", .type = 'u', .dest = &opt_port,
+		 .descript = "Puerto del broker MQTT (por defecto CONFIG_TLALOC_BROKER_PORT)"},
+		{.option = "prefix", .name = "topic", .type = 's', .dest = &opt_prefix,
+		 .descript = "Prefijo de topics MQTT (por defecto CONFIG_TLALOC_MQTT_PREFIX)"},
+		ARG_TABLE_ENDMARKER,
+	};
+
+	native_add_command_line_opts(opts);
+}
+NATIVE_TASK(add_options, PRE_BOOT_1, 20);
+
+uint16_t hal_broker_port(void)
+{
+	return (uint16_t)opt_port;
+}
+
+const char *hal_mqtt_prefix(void)
+{
+	return opt_prefix != NULL ? opt_prefix : CONFIG_TLALOC_MQTT_PREFIX;
+}
+
 int hal_init(void)
 {
 	llc_cfg_t cfg;
 
 	app_config(&cfg); /* misma geometría y signos que el núcleo */
 	geo = cfg.drive;
-	if (!amr_omni_init(&kin, geo.wheel_radius, geo.center_distance, geo.angles_rad)) {
+	if (!amr_mecanum_init(&kin, geo.wheel_radius, geo.half_length, geo.half_width)) {
 		return -EINVAL;
 	}
 	rc_sim_init(&rc, geo.rc_addr[0], geo.rc_addr[1]);
+	gim_sim_init(&gim);
 	bno_sim_init(&bno);
 	bno.gyro_bias = 0.01f; /* sesgo realista: el EKF debe absorberlo con el yaw */
 	rc_inner = rc_sim_transport(&rc);

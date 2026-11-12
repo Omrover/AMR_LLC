@@ -1,9 +1,11 @@
 /*
- * Prueba de lazo cerrado del núcleo llc en host: 2 RoboClaw y la BNO080
- * simuladas a nivel de bytes, comandos JSON del contrato y telemetría.
+ * Prueba de lazo cerrado del núcleo llc en host: 2 RoboClaw, la BNO080 y 4
+ * GIM6010-8 simulados a nivel de bytes/tramas, comandos JSON del contrato y
+ * telemetría.
  */
 #include "llc.h"
 #include "bno08x_sim.h"
+#include "gim6010_sim.h"
 #include "roboclaw_sim.h"
 
 #include <math.h>
@@ -28,6 +30,8 @@ static int failures;
 typedef struct {
 	rc_sim_t rc;
 	bno_sim_t bno;
+	gim_sim_t gim;
+	bool no_can;          /* rig sin bus CAN (brazo ausente) */
 	llc_imu_t imu;
 	llc_t llc;
 	uint32_t now;
@@ -78,14 +82,16 @@ static amr_hdr_t hdr(rig_t *r)
 	return h;
 }
 
-static void rig_init(rig_t *r)
+static void rig_init_ex(rig_t *r, bool can)
 {
 	llc_cfg_t cfg;
 	rc_transport_t rt;
 	bno_transport_t bt;
+	gim_transport_t gt;
 	llc_io_t io;
 
 	memset(r, 0, sizeof(*r));
+	r->no_can = !can;
 	r->now = 1000;
 	r->object_at = -1.0f;
 	r->stall_a = 1.5f;
@@ -94,12 +100,19 @@ static void rig_init(rig_t *r)
 	bno_sim_init(&r->bno);
 	rt = rc_sim_transport(&r->rc);
 	bt = bno_sim_transport(&r->bno);
+	gim_sim_init(&r->gim);
+	gt = gim_sim_transport(&r->gim);
 	io.servo_set_us = io_servo;
 	io.adc_read_mv = io_adc;
 	io.ctx = r;
 	llc_default_cfg(&cfg);
-	CHECK(llc_init(&r->llc, &cfg, &rt, &io));
+	CHECK(llc_init(&r->llc, &cfg, &rt, r->no_can ? NULL : &gt, &io));
 	llc_imu_init(&r->imu, &bt);
+}
+
+static void rig_init(rig_t *r)
+{
+	rig_init_ex(r, true);
 }
 
 /* Velocidad real del cuerpo a partir de las ruedas simuladas. */
@@ -155,6 +168,7 @@ static void run(rig_t *r, double seconds, bool stream, float vx, float vy, float
 		r->yaw += twz * 0.005;
 		bno_sim_set_motion(&r->bno, (float)r->yaw, twz, 0.0f, 0.0f);
 		bno_sim_step(&r->bno, 0.005);
+		gim_sim_step(&r->gim, 0.005);
 
 		upd = llc_imu_service(&r->imu, r->now, 4);
 		if (upd > 0) {
@@ -258,7 +272,7 @@ static void test_commands_and_acks(void)
 	CHECK(!r.llc.estop);
 	CHECK(send(&r, LLC_CMD_ARM,
 		   "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":7,\"op\":\"enable\"}", false) > 0 &&
-	      strstr(r.ack, "\"rejected\""));
+	      strstr(r.ack, "\"ok\""));
 	CHECK(send(&r, LLC_CMD_ARM, "basura", false) == 0); /* sin seq: no hay ack */
 
 	/* e-stop: rueda libre, rechaza gripper y lo reporta */
@@ -285,6 +299,82 @@ static void test_commands_and_acks(void)
 	CHECK(NEAR(jnum(buf, "x"), 2.0, 1e-3) && NEAR(jnum(buf, "yaw"), 1.0, 1e-3));
 	run(&r, 0.5, true, 0.0f, 0.0f, 0.0f);
 	CHECK(tel(&r, LLC_TEL_ODOM, buf, sizeof(buf)) > 0 && NEAR(jnum(buf, "yaw"), 1.0, 0.02));
+}
+
+static void arm_cmd(rig_t *r, unsigned seq, const char *body)
+{
+	char json[300];
+
+	snprintf(json, sizeof(json), "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":%u,%s}", seq, body);
+	send(r, LLC_CMD_ARM, json, false);
+}
+
+static void test_arm(void)
+{
+	rig_t r;
+	char buf[600];
+	const char *goal = "\"op\":\"goal\",\"pos\":[4096,-2048,1500,-800],"
+			   "\"acc\":[200,200,200,200],\"dec\":[200,200,200,200]";
+
+	/* Sin bus CAN: solo disable/clear. */
+	rig_init_ex(&r, false);
+	run(&r, 0.2, false, 0, 0, 0);
+	arm_cmd(&r, 1, "\"op\":\"enable\"");
+	CHECK(strstr(r.ack, "\"rejected\"") && strstr(r.ack, "CAN"));
+	arm_cmd(&r, 2, "\"op\":\"disable\"");
+	CHECK(strstr(r.ack, "\"ok\""));
+
+	rig_init(&r);
+	r.gim.m[2].pos = r.gim.m[2].target = 700.0; /* junta 3 fuera de cero al encender */
+	run(&r, 0.2, false, 0, 0, 0);
+	arm_cmd(&r, 1, goal);
+	CHECK(strstr(r.ack, "\"rejected\"") && strstr(r.ack, "enable"));
+	arm_cmd(&r, 2, "\"op\":\"enable\"");
+	CHECK(strstr(r.ack, "\"ok\""));
+	run(&r, 0.2, false, 0, 0, 0);
+	CHECK(tel(&r, LLC_TEL_ARM, buf, sizeof(buf)) > 0);
+	CHECK(strstr(buf, "\"enabled\":true") && strstr(buf, "\"pos\":[0,0,700,0]"));
+	CHECK(strstr(buf, "\"in_pos\":[true,true,true,true]"));
+
+	arm_cmd(&r, 3, goal);
+	CHECK(strstr(r.ack, "\"ok\""));
+	run(&r, 0.3, false, 0, 0, 0);
+	CHECK(tel(&r, LLC_TEL_ARM, buf, sizeof(buf)) > 0 && strstr(buf, "false"));
+	run(&r, 3.0, false, 0, 0, 0);
+	CHECK(tel(&r, LLC_TEL_ARM, buf, sizeof(buf)) > 0);
+	CHECK(strstr(buf, "\"pos\":[4096,-2048,1500,-800]") != NULL);
+	CHECK(strstr(buf, "\"in_pos\":[true,true,true,true]") && strstr(buf, "\"fault\":[0,0,0,0]"));
+
+	/* Fuera de los límites del MCU. */
+	arm_cmd(&r, 4, "\"op\":\"goal\",\"pos\":[0,0,99999,0],"
+		       "\"acc\":[100,100,100,100],\"dec\":[100,100,100,100]");
+	CHECK(strstr(r.ack, "\"rejected\"") && strstr(r.ack, "limites"));
+
+	/* E-stop durante un movimiento: el brazo frena y se queda (no se suelta). */
+	arm_cmd(&r, 5, "\"op\":\"home\"");
+	CHECK(strstr(r.ack, "\"ok\""));
+	run(&r, 0.4, false, 0, 0, 0);
+	CHECK(send(&r, LLC_CMD_ESTOP,
+		   "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":20,\"active\":true}", false) > 0);
+	run(&r, 2.0, false, 0, 0, 0);
+	CHECK(r.gim.m[0].enabled && fabs(r.gim.m[0].pos) > 500.0); /* no llegó a home */
+	arm_cmd(&r, 6, "\"op\":\"home\"");
+	CHECK(strstr(r.ack, "\"rejected\"") && strstr(r.ack, "e-stop"));
+	CHECK(send(&r, LLC_CMD_ESTOP,
+		   "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":21,\"active\":false}", false) > 0);
+
+	/* Motor sin respuesta: bit 3 (CAN) en llc/status y fault 255 en llc/arm. */
+	r.gim.m[1].online = false;
+	run(&r, 0.2, false, 0, 0, 0);
+	CHECK(r.llc.faults & AMR_FAULT_CAN_BUS);
+	CHECK(tel(&r, LLC_TEL_ARM, buf, sizeof(buf)) > 0 && strstr(buf, "\"fault\":[0,255,0,0]"));
+	r.gim.m[1].online = true;
+	r.gim.m[3].fault = 0x10;
+	run(&r, 0.7, false, 0, 0, 0);
+	CHECK(!(r.llc.faults & AMR_FAULT_CAN_BUS) && (r.llc.faults & AMR_FAULT_ARM_MOTOR));
+	arm_cmd(&r, 7, "\"op\":\"clear\"");
+	run(&r, 0.7, false, 0, 0, 0);
+	CHECK(!(r.llc.faults & AMR_FAULT_ARM_MOTOR));
 }
 
 static void test_roboclaw_fault(void)
@@ -393,6 +483,7 @@ int main(void)
 	test_watchdog_and_invalid();
 	test_commands_and_acks();
 	test_roboclaw_fault();
+	test_arm();
 	test_imu_reset_and_loss();
 	test_gripper();
 	test_battery_critical();
