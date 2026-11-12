@@ -41,7 +41,7 @@ Además, la telemetría formateada en C se valida con el decodificador de Python
 | `llc/odom` | 0 | 50 Hz | `x`, `y` [m], `yaw` [rad] en `odom`; `vx`, `vy` [m/s], `wz` [rad/s] en `base_footprint`; `cov`: [6] varianzas ≥ 0 de (x, y, yaw, vx, vy, wz) |
 | `llc/imu` | 0 | 100 Hz | `q`: [w, x, y, z] Game Rotation Vector de la BNO080 (norma 0.9–1.1); `gyro`: [3] rad/s; `acc`: [3] m/s²; `acc_status`: 0–3 (precisión SH-2) |
 | `llc/wheels` | 0 | 20 Hz | `pos`: [4] rad acumulados; `vel`: [4] rad/s; `rc_err`: [2] status de error de RoboClaw 128 y 129 (≥ 0). Orden de ruedas: **fl, rl, rr, fr** |
-| `llc/arm` | 0 | 50 Hz | `enabled`: bool; `pos`: [4] int counts absolutos (0xA4); `vel`: [4] rpm; `cur`: [4] A; `temp`: [4] °C; `in_pos`: [4] bool; `fault`: [4] código 0xAE (0 = ok); `grip`: {`pos` 0–1 (0 = abierto), `cur` A (ACS712), `grasped` bool} |
+| `llc/arm` | 0 | 50 Hz | `enabled`: bool; `pos`: [4] int counts absolutos (0xA4); `vel`: [4] rpm; `cur`: [4] A; `temp`: [4] °C; `in_pos`: [4] bool; `fault`: [4] código 0xAE (0 = ok, 255 = la junta no responde por CAN); `grip`: {`pos` 0–1 (0 = abierto), `cur` A (ACS712), `grasped` bool} |
 | `llc/battery` | 0 | 1 Hz | `volt`: tensión principal [V] (RoboClaw cmd 24); opcional `logic_volt` [V] |
 | `llc/status` | 1 | 2 Hz | `state`: `init`/`ok`/`estop`/`fault`; `estop` bool; `faults` bitmask (abajo); `wd` bool (watchdog de velocidad disparado); `cpu` 0–1 |
 | `llc/ack` | 1 | por comando | `seq`; `cmd`: `arm`/`gripper`/`estop`/`odom_reset`; `result`: `ok`/`rejected`/`busy`/`duplicate`; opcional `msg` (≤ 64 chars) |
@@ -72,6 +72,8 @@ Todos llevan `v`, `boot_id` y `seq`.
 | `cmd/odom_reset` | 1 | `x`, `y`, `yaw` | `llc/ack` |
 
 **Deduplicación:** el MCU recuerda el último `seq` aceptado por topic. Si llega el mismo `seq` (retransmisión QoS 1), responde `duplicate` y no lo ejecuta de nuevo.
+
+**Brazo:** `enable` energiza las 4 juntas en su posición actual (no mueve nada) y requiere haber leído la posición de todas. `goal` y `home` (todas a 0 counts) se rechazan con el brazo deshabilitado, con e-stop activo o fuera de los límites de seguridad del MCU (`TLALOC_ARM_LIMIT_COUNTS`, ±16384 counts por defecto). Con e-stop el brazo **frena y mantiene** la posición: no se libera (0xCF) porque caería por gravedad. `disable` sí lo libera.
 
 **Gripper:** al cerrar, el MCU avanza el servo hasta `pos` o hasta que la corriente del ACS712 supera `max_cur`. En ese punto fija `grip.grasped = true` y mantiene la posición.
 
