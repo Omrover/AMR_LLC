@@ -190,7 +190,7 @@
 	};
 };
 
-/* Ethernet 100BASE-TX: KSZ8091RNA en RMII con oscilador de 50 MHz (Y4). */
+/* Ethernet 100BASE-TX: KSZ8091RND en RMII con oscilador de 50 MHz (Y4). */
 &emac0 {
 	pinctrl-0 = <&emac0_default>;
 	pinctrl-names = "default";
@@ -205,10 +205,18 @@
 	pinctrl-names = "default";
 	status = "okay";
 
-	/* Dirección por strap CRS_DV/PHYAD[1:0] del KSZ8091RNA: pull-down
-	 * interno = 0 (el .mex no la fija). Si no hay enlace, probar reg = <3>.
-	 * El driver KSZ8081 es compatible a nivel de registros con el KSZ8091RNA.
-	 * ENET_RESET (PTE21, activo bajo) según el .mex. */
+	/* U14 = KSZ8091RNDIA (BOM FRDM-A rev A, hoja 9):
+	 * - XI recibe 50 MHz del oscilador Y4 por R249; el mismo reloj llega al
+	 *   MCU (TX_CLK, PTC0) por R261. Y3 (25 MHz) queda desconectado
+	 *   (R248/R251 DNP). Por eso interface-type = "rmii" (50 MHz, el driver
+	 *   pone en 1 el bit 7 del reg 0x1F). No usar "rmii-25MHz".
+	 * - Straps: PHYAD = 0 (R538 1K a GND), ANEN_SPEED = 1 (R541 10K a 3V3).
+	 * - Reset: ENET_RESET = RESET_MCU AND PTE21 (U15), con pull-up R306.
+	 * - LEDs del RJ45: ambos cuelgan de LED0. Naranja/amarillo = LED0 bajo =
+	 *   hay enlace (parpadea con actividad); verde = LED0 alto = sin enlace o
+	 *   PHY en reset.
+	 * Para anunciar solo 100 Mbps (sin quitar la autonegociación):
+	 *   default-speeds = "100BASE Full-Duplex", "100BASE Half-Duplex"; */
 	phy: ethernet-phy@0 {
 		compatible = "microchip,ksz8081";
 		reg = <0>;

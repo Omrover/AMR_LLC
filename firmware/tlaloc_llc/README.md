@@ -10,7 +10,7 @@ Firmware de la Tlaloc (FRDM-A-S32K344). Habla el contrato MQTT v1
 | Gripper | Servo PWM 50 Hz + ACS712 | eMIOS1 ch10 PTA27, ADC0 precisión ch0 PTD1 |
 | Brazo (M5) | 4 GIM6010-8 | FlexCAN0 RX PTA6 / TX PTA7 |
 | SBC | FS26 (watchdog) | LPSPI0 PCS0 PTB0, SOUT PTB1, SCK PTC8, SIN PTC9, INTB PTE18 (WKPU) |
-| Red | KSZ8091RNA RMII → `eno1` de la NUC | EMAC0 (pines del `.mex`), reset PHY PTE21 |
+| Red | KSZ8091RND RMII (50 MHz de Y4) → `eno1` de la NUC | EMAC0 (pines del `.mex`), reset PHY PTE21 |
 | Consola | OpenSDA | LPUART6 RX PTA15 / TX PTA16, 115200 |
 
 ## Estructura
@@ -113,7 +113,50 @@ Opciones útiles (`-- -DCONFIG_...=...` o `prj.conf`):
   cada reconexión (`TLALOC_RC_SERIAL_TIMEOUT_DS`, comando 14). Si el MCU deja
   de enviar, las ruedas paran en medio segundo.
 - Ethernet: pines RMII y reset del PHY (PTE21) tomados del `.mex` de la FRDM-A.
-  Dirección del PHY = 0 (strap por defecto); si no hay enlace, probar 3.
+  PHY KSZ8091RND con 50 MHz en XI; dirección 0 por strap (R538 a GND).
+
+### Si no hay enlace Ethernet
+
+LEDs del RJ45 de la Tlaloc: los dos cuelgan de la misma señal LED0 del PHY.
+**Naranja = hay enlace** (parpadea con tráfico). **Verde = sin enlace o PHY
+en reset.** Verde fijo con el cable conectado indica que el PHY no negoció; en
+ese caso el problema no es la IP ni MQTT.
+
+1. Dejar la NUC en autonegociación (no forzar 100 Mbps en un solo extremo: el
+   otro cae a half-duplex o no levanta):
+   `sudo ethtool -s eno1 autoneg on` y `nmcli con up <con>`. Revisar con
+   `ethtool eno1` (Speed, Duplex, Link detected).
+2. Compilar con diagnóstico:
+   `west build -b tlaloc -p -- -DEXTRA_CONF_FILE=debug_eth.conf`
+   (habilita shell, `net`, `mdio` y logs DBG de PHY y Ethernet; sin motores).
+3. En la consola OpenSDA (115200), tras el arranque:
+   - Debe aparecer `PHY 0 is up`. Si sale `PHY is still in factory mode!` o
+     `Failed to read from ...`, el MDIO no responde (pines PTD16/PTD17,
+     dirección).
+   - `mdio` + TAB muestra la sintaxis de la versión instalada. Leer del PHY 0:
+     reg 0x02/0x03 (ID: 0x0022 / 0x156x), 0x01 (BMSR: bit 2 = enlace, bit 5 =
+     autoneg completa), 0x00 (BMCR: bit 11 power-down, bit 10 isolate deben
+     ser 0), 0x1F (bit 7 = 1, modo 50 MHz), 0x16 (bit 1 override RMII),
+     0x05 (lo que anunció el otro extremo).
+   - `net iface` (IP 192.168.50.20) y `net ping 192.168.50.1`.
+   - `PHY (0) autonegotiation timed out` en bucle: el driver de Zephyr
+     reinicia la negociación cada `PHY_AUTONEG_TIMEOUT_MS`. `boards/tlaloc.conf`
+     la sube a 15 s (con 4 s no enlazaba con la NUC ni con el switch, y el
+     ejemplo RTD de NXP, que no toca el PHY, sí).
+   - Si MDIO responde, 0x1F tiene el bit 7 en 1 y BMSR (0x01) se queda en
+     0x7849 (sin enlace, AN incompleta) con un switch que sí enlaza con otros
+     equipos, el problema está del lado de línea: JP5 (VDD_HV_B →
+     VDD_HV_B_PERH = P3V3_ENET) puesto, 3.3 V en P3V3_ENET y en VDDA_3V3
+     (pin 2 de U14, tras L8), 1.2 V en VDD_1V2 (pin 1), 50 MHz en TP65.
+     Sin JP5 el PHY se alimenta parcialmente por los pines MDIO/RMII:
+     contesta por MDIO pero no transmite.
+   - LinkMD (prueba de cable del KSZ8091): reg 0x00 = 0x2100 (AN off),
+     reg 0x1F = 0xA180 (MDI-X fijo), reg 0x1D = 0x8000 y releer 0x1D hasta que
+     el bit 15 baje. Bits 14:13: 00 normal, 01 abierto, 10 corto, 11 falló;
+     bits 8:0 = distancia a la falla. Reiniciar después para volver a AN.
+4. Para anunciar solo 100 Mbps, el ajuste va en el devicetree, no en
+   `prj.conf`: en el nodo `phy` de `tlaloc.dts`,
+   `default-speeds = "100BASE Full-Duplex", "100BASE Half-Duplex";`.
 - ACS712-05B (185 mV/A) con divisor 2/3 hacia el ADC de 3.3 V: 10k en serie y
   20k a GND (el ACS712 pide ≥ 4.7k de carga). Si el divisor es 1/2 (10k/10k),
   `TLALOC_ACS712_MV_PER_A_X10=925`.
