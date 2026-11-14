@@ -115,48 +115,45 @@ Opciones útiles (`-- -DCONFIG_...=...` o `prj.conf`):
 - Ethernet: pines RMII y reset del PHY (PTE21) tomados del `.mex` de la FRDM-A.
   PHY KSZ8091RND con 50 MHz en XI; dirección 0 por strap (R538 a GND).
 
+- ACS712-05B (185 mV/A) con divisor 2/3 hacia el ADC de 3.3 V: 10k en serie y
+  20k a GND (el ACS712 pide ≥ 4.7k de carga). Si el divisor es 1/2 (10k/10k),
+  `TLALOC_ACS712_MV_PER_A_X10=925`.
+
+### Ethernet y MQTT: qué se resolvió (nov 2026)
+
+- **PHY:** `tlaloc.dts` usa el driver MII genérico (`ethernet-phy`). Con
+  `microchip,ksz8081` el KSZ8091RND nunca completaba la autonegociación (BMSR
+  0x7849) y quedaba así hasta un reset de placa; con el genérico enlaza a
+  100 Mbps full duplex en ~3 s. El ejemplo RTD de NXP, que no toca el PHY,
+  también enlaza.
+- **TX RMII:** el grupo TXD0/TXD1/TX_EN de `tlaloc-pinctrl.dtsi` necesita
+  `output-enable` (en S32K3 el OBE solo se pone así).
+- **CAN sin motores:** `can_send()` sin callback espera el fin de la trama sin
+  límite, y sin ACK nunca termina. El hilo de control se quedaba con
+  `core_lock` y MQTT se conectaba pero no publicaba (el broker lo tiraba por
+  keepalive). `can_tx()` ahora envía con callback y no encola si el
+  controlador está en error-passive/bus-off; el brazo queda offline (fault 255).
+
 ### Si no hay enlace Ethernet
 
 LEDs del RJ45 de la Tlaloc: los dos cuelgan de la misma señal LED0 del PHY.
 **Naranja = hay enlace** (parpadea con tráfico). **Verde = sin enlace o PHY
-en reset.** Verde fijo con el cable conectado indica que el PHY no negoció; en
-ese caso el problema no es la IP ni MQTT.
+en reset.**
 
-1. Dejar la NUC en autonegociación (no forzar 100 Mbps en un solo extremo: el
-   otro cae a half-duplex o no levanta):
-   `sudo ethtool -s eno1 autoneg on` y `nmcli con up <con>`. Revisar con
-   `ethtool eno1` (Speed, Duplex, Link detected).
+1. Dejar la NUC en autonegociación: `sudo ethtool -s eno1 autoneg on`.
+   Revisar con `ethtool eno1` o `cat /sys/class/net/eno1/carrier`.
 2. Compilar con diagnóstico:
    `west build -b tlaloc -p -- -DEXTRA_CONF_FILE=debug_eth.conf`
-   (habilita shell, `net`, `mdio` y logs DBG de PHY y Ethernet; sin motores).
-3. En la consola OpenSDA (115200), tras el arranque:
-   - Debe aparecer `PHY 0 is up`. Si sale `PHY is still in factory mode!` o
-     `Failed to read from ...`, el MDIO no responde (pines PTD16/PTD17,
-     dirección).
-   - `mdio` + TAB muestra la sintaxis de la versión instalada. Leer del PHY 0:
-     reg 0x02/0x03 (ID: 0x0022 / 0x156x), 0x01 (BMSR: bit 2 = enlace, bit 5 =
-     autoneg completa), 0x00 (BMCR: bit 11 power-down, bit 10 isolate deben
-     ser 0), 0x1F (bit 7 = 1, modo 50 MHz), 0x16 (bit 1 override RMII),
-     0x05 (lo que anunció el otro extremo).
-   - `net iface` (IP 192.168.50.20) y `net ping 192.168.50.1`.
-   - `PHY (0) autonegotiation timed out` en bucle: el driver de Zephyr
-     reinicia la negociación cada `PHY_AUTONEG_TIMEOUT_MS`. `boards/tlaloc.conf`
-     la sube a 15 s (con 4 s no enlazaba con la NUC ni con el switch, y el
-     ejemplo RTD de NXP, que no toca el PHY, sí).
-   - Si MDIO responde, 0x1F tiene el bit 7 en 1 y BMSR (0x01) se queda en
-     0x7849 (sin enlace, AN incompleta) con un switch que sí enlaza con otros
-     equipos, el problema está del lado de línea: JP5 (VDD_HV_B →
-     VDD_HV_B_PERH = P3V3_ENET) puesto, 3.3 V en P3V3_ENET y en VDDA_3V3
-     (pin 2 de U14, tras L8), 1.2 V en VDD_1V2 (pin 1), 50 MHz en TP65.
-     Sin JP5 el PHY se alimenta parcialmente por los pines MDIO/RMII:
-     contesta por MDIO pero no transmite.
-   - LinkMD (prueba de cable del KSZ8091): reg 0x00 = 0x2100 (AN off),
-     reg 0x1F = 0xA180 (MDI-X fijo), reg 0x1D = 0x8000 y releer 0x1D hasta que
-     el bit 15 baje. Bits 14:13: 00 normal, 01 abierto, 10 corto, 11 falló;
-     bits 8:0 = distancia a la falla. Reiniciar después para volver a AN.
-4. Para anunciar solo 100 Mbps, el ajuste va en el devicetree, no en
-   `prj.conf`: en el nodo `phy` de `tlaloc.dts`,
+   (shell, `net`, `mdio`, logs DBG de PHY y Ethernet; sin motores).
+3. Consola OpenSDA a 115200 con **un solo** programa abierto en
+   `/dev/ttyACM0` (`picocom -b 115200 /dev/ttyACM0`); dos lectores a la vez
+   se reparten los bytes y los logs salen cortados.
+   - Debe aparecer `PHY (0) Link speed 100 Mb, full duplex`.
+   - `net iface`, `net ping 192.168.50.1`, `kernel thread list`.
+   - `mdio read mdio 0 <reg>` (registro en **hex**, sin `0x`): 0 BMCR,
+     1 BMSR (bit 2 enlace, bit 5 AN completa), 4 ANAR, 5 lo que anunció el
+     otro extremo, 1e (bit 4 = hay señal en RX), 1f (bit 7 = 1, modo 50 MHz).
+4. Hardware (si el ejemplo RTD tampoco enlaza): JP5 puesto (P3V3_ENET),
+   3.3 V en VDDA_3V3 (pin 2 de U14), 1.2 V en VDD_1V2 (pin 1), 50 MHz en TP65.
+5. Para anunciar solo 100 Mbps: en el nodo `phy` de `tlaloc.dts`,
    `default-speeds = "100BASE Full-Duplex", "100BASE Half-Duplex";`.
-- ACS712-05B (185 mV/A) con divisor 2/3 hacia el ADC de 3.3 V: 10k en serie y
-  20k a GND (el ACS712 pide ≥ 4.7k de carga). Si el divisor es 1/2 (10k/10k),
-  `TLALOC_ACS712_MV_PER_A_X10=925`.
