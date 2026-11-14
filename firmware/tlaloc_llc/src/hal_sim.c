@@ -112,6 +112,11 @@ rc_transport_t hal_roboclaw_transport(void)
 	return t;
 }
 
+void hal_rc_stats(hal_rc_stats_t *s)
+{
+	*s = (hal_rc_stats_t){0}; /* el simulador no pasa por una UART */
+}
+
 /* ----------------------------------------------------------------- BNO080 */
 
 static int sim_imu_write(void *ctx, const uint8_t *buf, size_t n)

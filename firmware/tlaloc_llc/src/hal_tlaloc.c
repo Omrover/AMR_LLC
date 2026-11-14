@@ -45,23 +45,31 @@ static volatile uint32_t rc_tx_len;
 static volatile uint32_t rc_tx_pos;
 static K_SEM_DEFINE(rc_rx_sem, 0, 1);
 static K_SEM_DEFINE(rc_tx_idle, 1, 1);
+/* Diagnóstico (shell `rc stat`): bytes que salen y entran por la UART. */
+static volatile uint32_t rc_n_tx, rc_n_rx, rc_n_drop, rc_n_err;
 
 static void rc_uart_isr(const struct device *dev, void *user_data)
 {
 	ARG_UNUSED(user_data);
 
 	uart_irq_update(dev);
+	if (uart_err_check(dev) != 0) { /* framing/ruido/overrun: baud o nivel */
+		rc_n_err++;
+	}
 	if (uart_irq_rx_ready(dev)) {
 		uint8_t buf[16];
 		int n;
 
 		while ((n = uart_fifo_read(dev, buf, sizeof(buf))) > 0) {
+			rc_n_rx += (uint32_t)n;
 			for (int i = 0; i < n; i++) {
 				uint32_t head = rc_rx_head;
 
-				if (head - rc_rx_tail < RC_RX_SIZE) { /* lleno: se descarta */
+				if (head - rc_rx_tail < RC_RX_SIZE) {
 					rc_rx[head % RC_RX_SIZE] = buf[i];
 					rc_rx_head = head + 1U;
+				} else {
+					rc_n_drop++; /* lleno: se descarta */
 				}
 			}
 		}
@@ -73,6 +81,7 @@ static void rc_uart_isr(const struct device *dev, void *user_data)
 
 			if (w > 0) {
 				rc_tx_pos += (uint32_t)w;
+				rc_n_tx += (uint32_t)w;
 			}
 		} else {
 			uart_irq_tx_disable(dev);
@@ -137,6 +146,14 @@ rc_transport_t hal_roboclaw_transport(void)
 	rc_transport_t t = {uart_rc_write, uart_rc_read, rc_flush_rx, NULL};
 
 	return t;
+}
+
+void hal_rc_stats(hal_rc_stats_t *s)
+{
+	s->tx_bytes = rc_n_tx;
+	s->rx_bytes = rc_n_rx;
+	s->rx_dropped = rc_n_drop;
+	s->uart_errors = rc_n_err;
 }
 
 /* -------------------------------------------------------------------- BNO080 */
@@ -298,19 +315,39 @@ static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbu
 CAN_MSGQ_DEFINE(can_rx_q, 16);
 static bool can_ok;
 
+static void can_tx_done(const struct device *dev, int error, void *user_data)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(error);
+	ARG_UNUSED(user_data);
+}
+
 static int can_tx(void *ctx, uint16_t id, const uint8_t *data, uint8_t len)
 {
 	struct can_frame f = {0};
+	enum can_state state;
 
 	ARG_UNUSED(ctx);
 	if (len > 8U) {
 		return -EINVAL;
 	}
+	/* Sin nadie en el bus (motores apagados o desconectados) no hay ACK: FlexCAN
+	 * reintenta la trama indefinidamente y el contador de errores deja el
+	 * controlador en error-passive. No se encolan más tramas hasta que las
+	 * pendientes salgan; el brazo queda offline (fault 255) sin bloquear. */
+	if (can_get_state(can_dev, &state, NULL) == 0 &&
+	    (state == CAN_STATE_ERROR_PASSIVE || state == CAN_STATE_BUS_OFF)) {
+		return -ENETDOWN;
+	}
 	f.id = id;
 	f.dlc = can_bytes_to_dlc(len);
 	memcpy(f.data, data, len);
 	k_msgq_purge(&can_rx_q); /* una respuesta vieja no debe confirmar este comando */
-	return can_send(can_dev, &f, K_MSEC(5), NULL, NULL);
+	/* Con callback, can_send() no espera a que la trama salga: sin él espera el
+	 * fin de la transmisión sin límite, y sin ACK eso nunca pasa (el hilo de
+	 * control quedaba bloqueado con core_lock tomado y MQTT dejaba de publicar).
+	 * La confirmación real es la respuesta del motor que lee can_rx(). */
+	return can_send(can_dev, &f, K_NO_WAIT, can_tx_done, NULL);
 }
 
 static int can_rx(void *ctx, uint16_t *id, uint8_t data[8], uint8_t *len, uint32_t timeout_ms)

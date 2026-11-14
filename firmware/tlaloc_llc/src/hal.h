@@ -17,6 +17,14 @@
 
 int hal_init(void);
 rc_transport_t hal_roboclaw_transport(void);
+/* Contadores de la UART de las RoboClaw desde el arranque (diagnóstico). */
+typedef struct {
+	uint32_t tx_bytes;
+	uint32_t rx_bytes;
+	uint32_t rx_dropped;
+	uint32_t uart_errors;
+} hal_rc_stats_t;
+void hal_rc_stats(hal_rc_stats_t *s);
 bno_transport_t hal_imu_transport(void);
 /* Bus CAN del brazo. send/recv en NULL si el bus no está disponible. */
 gim_transport_t hal_can_transport(void);

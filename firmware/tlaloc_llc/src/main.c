@@ -115,6 +115,73 @@ static void imu_thread(void *a, void *b, void *c)
 K_THREAD_DEFINE(imu_tid, 2048, imu_thread, NULL, NULL, NULL, K_PRIO_PREEMPT(3), 0,
 		K_TICKS_FOREVER);
 
+/* ------------------------------------------------- shell de diagnóstico */
+
+#ifdef CONFIG_SHELL
+#include <stdlib.h>
+#include <zephyr/shell/shell.h>
+
+/* rc stat: bytes por la UART de las RoboClaw y estado del driver. */
+static int cmd_rc_stat(const struct shell *sh, size_t argc, char **argv)
+{
+	hal_rc_stats_t s;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	hal_rc_stats(&s);
+	k_mutex_lock(&core_lock, K_FOREVER);
+	shell_print(sh, "uart: tx %u B, rx %u B, rx descartados %u, errores uart %u",
+		    s.tx_bytes, s.rx_bytes, s.rx_dropped, s.uart_errors);
+	for (int r = 0; r < 2; r++) {
+		shell_print(sh, "rc %u: fallas seguidas %u, rc_err %u", llc.cfg.drive.rc_addr[r],
+			    llc.drive.fail_count[r], llc.rc_err[r]);
+	}
+	k_mutex_unlock(&core_lock);
+	return 0;
+}
+
+/* rc probe <addr>: pide la versión (cmd 21) y muestra la respuesta cruda. El
+ * hilo de control queda fuera de la UART mientras dura (core_lock). */
+static int cmd_rc_probe(const struct shell *sh, size_t argc, char **argv)
+{
+	rc_transport_t t = hal_roboclaw_transport();
+	uint8_t req[2] = {(uint8_t)strtoul(argc > 1 ? argv[1] : "128", NULL, 0), 21U};
+	uint8_t resp[64];
+	size_t n = 0;
+	char line[3 * sizeof(resp) + 1];
+	char text[sizeof(resp) + 1];
+
+	k_mutex_lock(&core_lock, K_FOREVER);
+	k_msleep(30); /* que termine cualquier respuesta en curso */
+	t.flush_rx(t.ctx);
+	t.write(t.ctx, req, sizeof(req));
+	while (n < sizeof(resp) && t.read(t.ctx, &resp[n], 1, n == 0 ? 50 : 10) == 0) {
+		n++;
+	}
+	k_mutex_unlock(&core_lock);
+
+	for (size_t i = 0; i < n; i++) {
+		snprintf(&line[3 * i], 4, "%02x ", resp[i]);
+		text[i] = (resp[i] >= 0x20 && resp[i] < 0x7f) ? (char)resp[i] : '.';
+	}
+	line[3 * n] = '\0';
+	text[n] = '\0';
+	if (n == 0) {
+		shell_print(sh, "addr %u: sin respuesta en 50 ms", req[0]);
+	} else {
+		shell_print(sh, "addr %u: %u B: %s", req[0], (unsigned)n, line);
+		shell_print(sh, "texto: %s", text);
+	}
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(rc_cmds,
+	SHELL_CMD(stat, NULL, "Contadores de la UART de las RoboClaw", cmd_rc_stat),
+	SHELL_CMD_ARG(probe, NULL, "probe <addr>: versión cruda (cmd 21)", cmd_rc_probe, 1, 1),
+	SHELL_SUBCMD_SET_END);
+SHELL_CMD_REGISTER(rc, &rc_cmds, "Diagnóstico de las RoboClaw", NULL);
+#endif /* CONFIG_SHELL */
+
 /* ---------------------------------------------------------------------- MQTT */
 
 static const char *const cmd_names[LLC_CMD_COUNT] = {
