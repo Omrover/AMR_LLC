@@ -99,7 +99,7 @@
 	};
 
 	/*
-	 * Ethernet RMII hacia el KSZ8091RNA, pines del .mex de la FRDM-A
+	 * Ethernet RMII hacia el KSZ8091RND, pines del .mex de la FRDM-A
 	 * (ethtest.xml, nov 2026). PTC0 recibe el REF_CLK de 50 MHz por la entrada
 	 * TX_CLK; PTC1 (RX_CLK de MII) está ruteado en el .mex y no estorba en RMII.
 	 */
@@ -118,6 +118,10 @@
 			pinmux = <PTB5_EMAC_MII_RMII_TXD0>,
 				 <PTB4_EMAC_MII_RMII_TXD1>,
 				 <PTE9_EMAC_MII_RMII_TX_EN>;
+			/* En S32K3 el OBE del MSCR solo se pone con output-enable; el
+			 * .mex del ejemplo RTD de NXP (que sí enlaza) lo tiene en estos
+			 * tres pines. */
+			output-enable;
 		};
 	};
 

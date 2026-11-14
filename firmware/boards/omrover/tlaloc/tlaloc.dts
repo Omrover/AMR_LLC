@@ -208,8 +208,11 @@
 	/* U14 = KSZ8091RNDIA (BOM FRDM-A rev A, hoja 9):
 	 * - XI recibe 50 MHz del oscilador Y4 por R249; el mismo reloj llega al
 	 *   MCU (TX_CLK, PTC0) por R261. Y3 (25 MHz) queda desconectado
-	 *   (R248/R251 DNP). Por eso interface-type = "rmii" (50 MHz, el driver
-	 *   pone en 1 el bit 7 del reg 0x1F). No usar "rmii-25MHz".
+	 *   (R248/R251 DNP). El RND arranca en modo 50 MHz (reg 0x1F bit 7 = 1).
+	 * - Driver: PHY MII genérico, solo registros IEEE (reset, ANAR, AN).
+	 *   Con "microchip,ksz8081" el PHY no negociaba nunca (BMSR 0x7849) y
+	 *   quedaba así hasta un reset de placa, aunque el ejemplo RTD de NXP,
+	 *   que no toca el PHY, sí enlaza con la NUC a 100 Mbps full duplex.
 	 * - Straps: PHYAD = 0 (R538 1K a GND), ANEN_SPEED = 1 (R541 10K a 3V3).
 	 * - Reset: ENET_RESET = RESET_MCU AND PTE21 (U15), con pull-up R306.
 	 * - LEDs del RJ45: ambos cuelgan de LED0. Naranja/amarillo = LED0 bajo =
@@ -218,9 +221,8 @@
 	 * Para anunciar solo 100 Mbps (sin quitar la autonegociación):
 	 *   default-speeds = "100BASE Full-Duplex", "100BASE Half-Duplex"; */
 	phy: ethernet-phy@0 {
-		compatible = "microchip,ksz8081";
+		compatible = "ethernet-phy";
 		reg = <0>;
-		microchip,interface-type = "rmii";
 		reset-gpios = <&gpioe_h 5 GPIO_ACTIVE_LOW>;
 		status = "okay";
 	};
