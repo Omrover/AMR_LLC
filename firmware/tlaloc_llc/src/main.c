@@ -132,6 +132,9 @@ static int cmd_rc_stat(const struct shell *sh, size_t argc, char **argv)
 	k_mutex_lock(&core_lock, K_FOREVER);
 	shell_print(sh, "uart: tx %u B, rx %u B, rx descartados %u, errores uart %u",
 		    s.tx_bytes, s.rx_bytes, s.rx_dropped, s.uart_errors);
+	shell_print(sh, "transacciones: ok %u, timeout %u, crc %u, nack %u, io %u",
+		    llc.rc.stats.ok, llc.rc.stats.timeout, llc.rc.stats.crc, llc.rc.stats.nack,
+		    llc.rc.stats.io);
 	for (int r = 0; r < 2; r++) {
 		shell_print(sh, "rc %u: fallas seguidas %u, rc_err %u", llc.cfg.drive.rc_addr[r],
 			    llc.drive.fail_count[r], llc.rc_err[r]);
@@ -155,7 +158,7 @@ static int cmd_rc_probe(const struct shell *sh, size_t argc, char **argv)
 	k_msleep(30); /* que termine cualquier respuesta en curso */
 	t.flush_rx(t.ctx);
 	t.write(t.ctx, req, sizeof(req));
-	while (n < sizeof(resp) && t.read(t.ctx, &resp[n], 1, n == 0 ? 50 : 10) == 0) {
+	while (n < sizeof(resp) && t.read(t.ctx, &resp[n], 1, n == 0 ? 50 : 10) == 1) {
 		n++;
 	}
 	k_mutex_unlock(&core_lock);

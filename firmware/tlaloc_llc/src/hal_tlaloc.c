@@ -105,9 +105,12 @@ static int uart_rc_write(void *ctx, const uint8_t *buf, size_t n)
 	rc_tx_pos = 0;
 	rc_tx_len = (uint32_t)n;
 	uart_irq_tx_enable(rc_uart);
-	return 0;
+	return (int)n; /* contrato de rc_transport_t: bytes escritos */
 }
 
+/* Contrato de rc_transport_t (roboclaw.h): devuelve los bytes leídos, 0..n
+ * (menos de n = se agotó timeout_ms). Antes devolvía 0 en éxito y la librería
+ * lo tomaba como timeout: ninguna transacción con las RoboClaw salía bien. */
 static int uart_rc_read(void *ctx, uint8_t *buf, size_t n, uint32_t timeout_ms)
 {
 	ARG_UNUSED(ctx);
@@ -128,10 +131,10 @@ static int uart_rc_read(void *ctx, uint8_t *buf, size_t n, uint32_t timeout_ms)
 		int64_t left = deadline - k_uptime_get();
 
 		if (left <= 0 || k_sem_take(&rc_rx_sem, K_MSEC(left)) != 0) {
-			return -ETIMEDOUT;
+			break;
 		}
 	}
-	return 0;
+	return (int)got;
 }
 
 static void rc_flush_rx(void *ctx)
