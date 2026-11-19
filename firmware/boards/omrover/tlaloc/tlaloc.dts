@@ -72,6 +72,11 @@
 	status = "okay";
 };
 
+/* PTB21 (gpiob_h 5, EIRQ8): botón de paro físico */
+&gpiob_h {
+	status = "okay";
+};
+
 &gpioe_h {
 	status = "okay";
 };

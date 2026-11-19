@@ -25,6 +25,10 @@ typedef struct {
 	uint32_t uart_errors;
 } hal_rc_stats_t;
 void hal_rc_stats(hal_rc_stats_t *s);
+/* Paro físico: true si el botón (NC) está presionado, el cable está abierto o
+ * hubo un flanco de activación desde la última llamada (pulsos cortos no se
+ * pierden). Sin paro físico configurado devuelve false. */
+bool hal_estop_hw(void);
 bno_transport_t hal_imu_transport(void);
 /* Bus CAN del brazo. send/recv en NULL si el bus no está disponible. */
 gim_transport_t hal_can_transport(void);

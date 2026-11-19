@@ -159,6 +159,65 @@ void hal_rc_stats(hal_rc_stats_t *s)
 	s->uart_errors = rc_n_err;
 }
 
+/* ------------------------------------------------------------- paro físico */
+
+/* Botón NC entre PTB21 y GND con pull-up interno: cerrado = 0 (normal),
+ * presionado o cable roto = 1 (paro). El EIRQ8 enclava los flancos de
+ * activación para que un pulso más corto que el ciclo de control (20 ms)
+ * tampoco se pierda; el nivel se lee además en cada ciclo. */
+#define ESTOP_HW (IS_ENABLED(CONFIG_TLALOC_ESTOP_HW) && DT_NODE_HAS_PROP(USER_NODE, estop_gpios))
+
+#if ESTOP_HW
+static const struct gpio_dt_spec estop_in = GPIO_DT_SPEC_GET(USER_NODE, estop_gpios);
+static struct gpio_callback estop_cb;
+static atomic_t estop_edge;
+static bool estop_ok;
+
+static void estop_handler(const struct device *port, struct gpio_callback *cb, uint32_t pins)
+{
+	ARG_UNUSED(port);
+	ARG_UNUSED(cb);
+	ARG_UNUSED(pins);
+	atomic_set(&estop_edge, 1);
+}
+#endif
+
+bool hal_estop_hw(void)
+{
+#if ESTOP_HW
+	if (!estop_ok) {
+		return true; /* pin sin configurar: a prueba de fallas */
+	}
+	bool edge = atomic_set(&estop_edge, 0) != 0;
+
+	return edge || gpio_pin_get_dt(&estop_in) != 0; /* error de lectura (<0) = paro */
+#else
+	return false;
+#endif
+}
+
+static void estop_init(void)
+{
+#if ESTOP_HW
+	estop_ok = gpio_is_ready_dt(&estop_in) &&
+		   gpio_pin_configure_dt(&estop_in, GPIO_INPUT) == 0;
+	if (estop_ok) {
+		/* Sin interrupción el nivel se sigue leyendo cada 20 ms. */
+		if (gpio_pin_interrupt_configure_dt(&estop_in, GPIO_INT_EDGE_TO_ACTIVE) == 0) {
+			gpio_init_callback(&estop_cb, estop_handler, BIT(estop_in.pin));
+			(void)gpio_add_callback(estop_in.port, &estop_cb);
+		} else {
+			LOG_WRN("e-stop: sin EIRQ, solo lectura por nivel");
+		}
+		LOG_INF("e-stop físico en PTB21: %s",
+			gpio_pin_get_dt(&estop_in) != 0 ? "ACTIVO (botón o cable abierto)"
+							: "liberado");
+	} else {
+		LOG_ERR("e-stop: no se pudo configurar PTB21; la base queda en paro");
+	}
+#endif
+}
+
 /* -------------------------------------------------------------------- BNO080 */
 
 static const struct device *const imu_bus = DEVICE_DT_GET(DT_ALIAS(imu_i2c));
@@ -434,6 +493,8 @@ int hal_init(void)
 		LOG_WRN("INT de la BNO080 no disponible: se sondea cada 5 ms");
 	}
 #endif
+
+	estop_init();
 
 	if (!pwm_is_ready_dt(&servo)) {
 		LOG_ERR("PWM del servo no listo");

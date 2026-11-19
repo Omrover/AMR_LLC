@@ -55,6 +55,7 @@ static void control_thread(void *a, void *b, void *c)
 		float zero_mv = -1.0f;
 
 		k_mutex_lock(&core_lock, K_FOREVER);
+		llc_estop_input(&llc, hal_estop_hw());
 		llc_control_step(&llc, now, atomic_get(&mqtt_up) != 0);
 		llc.cpu = (float)k_cyc_to_us_floor32(k_cycle_get_32() - t0) /
 			  (CONTROL_PERIOD_MS * 1000.0f);
@@ -71,7 +72,8 @@ static void control_thread(void *a, void *b, void *c)
 			LOG_INF("ACS712: cero en %.1f mV", (double)zero_mv);
 		}
 		if (faults != faults_logged) {
-			LOG_INF("faults 0x%02x (bits: 0 RC128, 1 RC129, 2 IMU, 5 gripper, 6 batería)",
+			LOG_INF("faults 0x%02x (bits: 0 RC128, 1 RC129, 2 IMU, 3 CAN, 4 brazo, "
+				"5 gripper, 6 batería, 7 e-stop físico)",
 				faults);
 			faults_logged = faults;
 		}

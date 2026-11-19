@@ -97,8 +97,9 @@ typedef struct {
 	bool arm_ok;                 /* hay transporte CAN */
 	amr_vel_wd_t wd;
 	amr_seq_t seq[LLC_CMD_COUNT];
-	bool estop;
+	bool estop;                  /* paro activo (MQTT o físico, enclavado) */
 	bool estop_applied;
+	bool estop_hw;               /* botón físico presionado o cable abierto, ahora */
 	bool started;                /* primera medición válida de encoders */
 	uint32_t faults;
 	uint32_t rc_err[2];
@@ -131,6 +132,12 @@ bool llc_init(llc_t *l, const llc_cfg_t *cfg, const rc_transport_t *rc_t,
  * comando lo requiere y devuelve su longitud (0 si no hay ack, p. ej. cmd/vel). */
 int llc_command(llc_t *l, llc_cmd_topic_t topic, const char *json, size_t len, bool retain,
 		const amr_hdr_t *hdr, uint32_t now_ms, char *ack, size_t ack_size);
+
+/* Estado del paro físico; llamar antes de cada llc_control_step. Activo enclava
+ * el e-stop (base en rueda libre, brazo sostenido en su posición). Soltar el
+ * botón no lo libera: hace falta cmd/estop active:false, que se rechaza
+ * mientras el botón siga presionado. */
+void llc_estop_input(llc_t *l, bool hw_active);
 
 /* Ciclo de control (20 ms). link_ok: sesión MQTT activa. */
 void llc_control_step(llc_t *l, uint32_t now_ms, bool link_ok);

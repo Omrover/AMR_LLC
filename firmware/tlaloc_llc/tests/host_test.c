@@ -32,6 +32,7 @@ typedef struct {
 	bno_sim_t bno;
 	gim_sim_t gim;
 	bool no_can;          /* rig sin bus CAN (brazo ausente) */
+	bool estop_hw;        /* botón de paro físico abierto */
 	llc_imu_t imu;
 	llc_t llc;
 	uint32_t now;
@@ -179,6 +180,7 @@ static void run(rig_t *r, double seconds, bool stream, float vx, float vy, float
 			r->next_vel_ms = r->now + 50;
 		}
 		if (r->now % 20 == 0) {
+			llc_estop_input(&r->llc, r->estop_hw);
 			llc_control_step(&r->llc, r->now, true);
 		}
 	}
@@ -299,6 +301,39 @@ static void test_commands_and_acks(void)
 	CHECK(NEAR(jnum(buf, "x"), 2.0, 1e-3) && NEAR(jnum(buf, "yaw"), 1.0, 1e-3));
 	run(&r, 0.5, true, 0.0f, 0.0f, 0.0f);
 	CHECK(tel(&r, LLC_TEL_ODOM, buf, sizeof(buf)) > 0 && NEAR(jnum(buf, "yaw"), 1.0, 0.02));
+}
+
+/* Paro físico: enclava, se reporta en el bit 7 y no se libera por MQTT mientras
+ * el botón siga abierto; soltarlo tampoco reanuda el movimiento por sí solo. */
+static void test_estop_hw(void)
+{
+	rig_t r;
+	char buf[400];
+
+	rig_init(&r);
+	run(&r, 0.6, false, 0, 0, 0);
+	run(&r, 1.0, true, 0.3f, 0.0f, 0.0f);
+	CHECK(NEAR(r.llc.meas.vx, 0.3, 0.03));
+
+	r.estop_hw = true;
+	run(&r, 0.1, true, 0.3f, 0.0f, 0.0f);
+	CHECK(r.llc.estop && (r.llc.faults & AMR_FAULT_ESTOP_HW));
+	CHECK(r.rc.dev[0].duty_mode && r.rc.dev[1].duty_mode);
+	CHECK(tel(&r, LLC_TEL_STATUS, buf, sizeof(buf)) > 0 && strstr(buf, "\"state\":\"estop\""));
+	CHECK(send(&r, LLC_CMD_ESTOP,
+		   "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":20,\"active\":false}", false) > 0 &&
+	      strstr(r.ack, "\"rejected\""));
+
+	/* se suelta el botón: sigue en paro hasta el comando explícito */
+	r.estop_hw = false;
+	run(&r, 0.5, true, 0.3f, 0.0f, 0.0f);
+	CHECK(r.llc.estop && !(r.llc.faults & AMR_FAULT_ESTOP_HW));
+	CHECK(r.rc.dev[0].duty_mode && r.rc.dev[1].duty_mode);
+	CHECK(send(&r, LLC_CMD_ESTOP,
+		   "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":21,\"active\":false}", false) > 0 &&
+	      strstr(r.ack, "\"ok\""));
+	run(&r, 1.5, true, 0.3f, 0.0f, 0.0f);
+	CHECK(!r.llc.estop && NEAR(r.llc.meas.vx, 0.3, 0.03));
 }
 
 static void arm_cmd(rig_t *r, unsigned seq, const char *body)
@@ -482,6 +517,7 @@ int main(void)
 	test_boot_and_drive();
 	test_watchdog_and_invalid();
 	test_commands_and_acks();
+	test_estop_hw();
 	test_roboclaw_fault();
 	test_arm();
 	test_imu_reset_and_loss();

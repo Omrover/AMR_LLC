@@ -125,6 +125,10 @@ static amr_ack_result_t execute(llc_t *l, llc_cmd_topic_t topic, const any_cmd_t
 		grip_command(&l->grip, c->grip.pos, c->grip.max_cur);
 		return AMR_ACK_OK;
 	case LLC_CMD_ESTOP:
+		if (!c->estop.active && l->estop_hw) {
+			*msg = "e-stop físico activo";
+			return AMR_ACK_REJECTED;
+		}
 		l->estop = c->estop.active;
 		if (!l->estop) {
 			l->estop_applied = false;
@@ -182,8 +186,11 @@ static void update_faults(llc_t *l, uint32_t now_ms)
 {
 	uint32_t f = l->faults & ~(uint32_t)(AMR_FAULT_ROBOCLAW_128 | AMR_FAULT_ROBOCLAW_129 |
 					      AMR_FAULT_IMU | AMR_FAULT_GRIPPER_OVERCURRENT |
-					      AMR_FAULT_BATTERY_CRITICAL);
+					      AMR_FAULT_BATTERY_CRITICAL | AMR_FAULT_ESTOP_HW);
 
+	if (l->estop_hw) {
+		f |= AMR_FAULT_ESTOP_HW;
+	}
 	if (!l->drive_ok) {
 		f |= AMR_FAULT_ROBOCLAW_128 | AMR_FAULT_ROBOCLAW_129;
 	} else {
@@ -260,6 +267,14 @@ static void step_gripper(llc_t *l, uint32_t dt_ms)
 	if (us != l->servo_us && l->io.servo_set_us != NULL &&
 	    l->io.servo_set_us(l->io.ctx, us) == 0) {
 		l->servo_us = us;
+	}
+}
+
+void llc_estop_input(llc_t *l, bool hw_active)
+{
+	l->estop_hw = hw_active;
+	if (hw_active) {
+		l->estop = true; /* enclavado: solo cmd/estop lo libera */
 	}
 }
 
