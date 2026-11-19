@@ -12,14 +12,19 @@
 
 &pinctrl {
 	/* INT de la BNO080 (activo bajo) en PTA21 = EIRQ3; paro físico en
-	 * PTB21 = EIRQ8 (botón NC a GND). Ojo: gpio_pin_configure() del driver
-	 * SIUL2 reescribe PUE/PUS del MSCR, así que el pull-up que vale es el de
-	 * los flags GPIO_PULL_UP en el overlay de la app. */
+	 * PTB21 = EIRQ8 (botón NC a 3.3 V). Ojo: gpio_pin_configure() del driver
+	 * SIUL2 reescribe PUE/PUS del MSCR, así que la polarización que vale es
+	 * la de los flags GPIO_PULL_* en el overlay de la app. */
 	eirq0_default: eirq0_default {
 		group1 {
-			pinmux = <PTA21_EIRQ3>, <PTB21_EIRQ8>;
+			pinmux = <PTA21_EIRQ3>;
 			input-enable;
 			bias-pull-up;
+		};
+		group2 {
+			pinmux = <PTB21_EIRQ8>;
+			input-enable;
+			bias-pull-down;
 		};
 	};
 

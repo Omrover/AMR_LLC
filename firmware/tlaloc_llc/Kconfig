@@ -17,15 +17,15 @@ config TLALOC_MQTT_PREFIX
 endmenu
 
 config TLALOC_ESTOP_HW
-	bool "Paro físico en PTB21 (botón NC a GND)"
+	bool "Paro físico en PTB21 (botón NC a 3.3 V)"
 	default y
 	help
-	  Botón de paro con contacto NC entre PTB21 y GND. Abierto (presionado o
+	  Botón de paro con contacto NC entre 3.3 V y PTB21. Abierto (presionado o
 	  cable suelto) = paro: la base queda en rueda libre y el brazo se
 	  sostiene en su posición (no se desenergiza para que no caiga). El paro
 	  queda enclavado: soltar el botón no reanuda nada, hace falta
 	  cmd/estop {"active": false} desde la NUC. Sin el botón instalado,
-	  puentear PTB21 a GND o compilar con este símbolo en n.
+	  puentear PTB21 a 3.3 V o compilar con este símbolo en n.
 
 menu "Tracción (RoboClaw)"
 

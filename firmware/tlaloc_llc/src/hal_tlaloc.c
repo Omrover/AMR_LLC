@@ -161,8 +161,9 @@ void hal_rc_stats(hal_rc_stats_t *s)
 
 /* ------------------------------------------------------------- paro físico */
 
-/* Botón NC entre PTB21 y GND con pull-up interno: cerrado = 0 (normal),
- * presionado o cable roto = 1 (paro). El EIRQ8 enclava los flancos de
+/* Botón NC entre 3.3 V y PTB21 con pull-down interno: cerrado = alto (normal),
+ * presionado o cable roto = bajo (paro; la polaridad está en el overlay,
+ * gpio_pin_get_dt() devuelve 1 = paro). El EIRQ8 enclava los flancos de
  * activación para que un pulso más corto que el ciclo de control (20 ms)
  * tampoco se pierda; el nivel se lee además en cada ciclo. */
 #define ESTOP_HW (IS_ENABLED(CONFIG_TLALOC_ESTOP_HW) && DT_NODE_HAS_PROP(USER_NODE, estop_gpios))

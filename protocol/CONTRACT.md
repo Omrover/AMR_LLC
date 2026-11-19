@@ -75,7 +75,7 @@ Todos llevan `v`, `boot_id` y `seq`.
 
 **Brazo:** `enable` energiza las 4 juntas en su posición actual (no mueve nada) y requiere haber leído la posición de todas. `goal` y `home` (todas a 0 counts) se rechazan con el brazo deshabilitado, con e-stop activo o fuera de los límites de seguridad del MCU (`TLALOC_ARM_LIMIT_COUNTS`, ±16384 counts por defecto). Con e-stop el brazo **frena y mantiene** la posición: no se libera (0xCF) porque caería por gravedad. `disable` sí lo libera.
 
-**E-stop:** se activa por `cmd/estop {"active": true}` o por el botón físico (NC en PTB21 de Tlaloc). La base queda en rueda libre y el brazo sostenido. El botón **enclava** el paro: soltarlo no reanuda nada; hace falta `cmd/estop {"active": false}`, que el MCU rechaza (`rejected`, `msg` "e-stop físico activo") mientras el bit 7 siga en 1.
+**E-stop:** se activa por `cmd/estop {"active": true}` o por el botón físico (NC entre 3.3 V y PTB21 de Tlaloc). La base queda en rueda libre y el brazo sostenido. El botón **enclava** el paro: soltarlo no reanuda nada; hace falta `cmd/estop {"active": false}`, que el MCU rechaza (`rejected`, `msg` "e-stop físico activo") mientras el bit 7 siga en 1.
 
 **Gripper:** al cerrar, el MCU avanza el servo hasta `pos` o hasta que la corriente del ACS712 supera `max_cur`. En ese punto fija `grip.grasped = true` y mantiene la posición.
 

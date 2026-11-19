@@ -13,8 +13,8 @@
 		/* INT de la BNO080, activo bajo, PTA21 = gpioa_h 5 (EIRQ3). El pull-up
 		 * va aquí: gpio_pin_configure() borra el de pinctrl. */
 		imu-int-gpios = <&gpioa_h 5 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-		/* Paro físico: botón NC entre PTB21 y GND, PTB21 = gpiob_h 5 (EIRQ8).
-		 * Activo alto: botón presionado o cable abierto -> pull-up -> paro. */
-		estop-gpios = <&gpiob_h 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+		/* Paro físico: botón NC entre 3.3 V y PTB21, PTB21 = gpiob_h 5 (EIRQ8).
+		 * Activo bajo: botón presionado o cable abierto -> pull-down -> paro. */
+		estop-gpios = <&gpiob_h 5 (GPIO_ACTIVE_LOW | GPIO_PULL_DOWN)>;
 	};
 };
