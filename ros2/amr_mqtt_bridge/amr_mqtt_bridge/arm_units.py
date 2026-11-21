@@ -31,6 +31,17 @@ class ArmUnits:
         return [int(round(z + s * q * self.counts_per_rad))
                 for q, z, s in zip(rad, self.zero, self.sign)]
 
+    def zero_for_pose(self, counts, q_ref):
+        """zero_offset con el que `counts` se leen como la pose `q_ref` (rad).
+
+        Calibración por pose de referencia: los GIM6010-8 guardan la última posición
+        al apagarse, pero si el brazo se mueve sin energía esa cuenta ya no vale.
+        """
+        if len(counts) != self.n or len(q_ref) != self.n:
+            raise ValueError(f'se esperaban {self.n} counts y {self.n} ángulos')
+        return [int(round(c - s * q * self.counts_per_rad))
+                for c, q, s in zip(counts, q_ref, self.sign)]
+
     def rpm_to_rad_s(self, rpm):
         return [s * r * 2.0 * math.pi / 60.0 / self.gear_ratio for r, s in zip(rpm, self.sign)]
 

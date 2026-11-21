@@ -7,7 +7,17 @@
     # TBD: verificar si los 16384 counts/rev del 0xA4/0xDA son del eje de salida
     # (gear_ratio = 1.0) o del rotor antes del reductor 8:1 (gear_ratio = 8.0).
     arm_gear_ratio: 1.0
-    arm_zero_offset: [0, 0, 0, 0]     # counts en la pose q = 0 del DH (calibrar)
+    # zero_offset: counts en la pose q = 0 del DH. Los GIM6010-8 guardan la última
+    # posición al apagarse, pero el brazo cae sin energía y esa cuenta deja de valer.
+    # Se calibra en cada arranque con el brazo quieto en arm_ref_pose:
+    #   ros2 service call /arm/calibrate std_srvs/srv/Trigger
+    # Con el robot real, llc_bridge.launch.py guarda el resultado en
+    # arm_calibration_file (~/.ros/amr_arm_calibration.yaml), que tiene prioridad
+    # sobre este valor si coinciden arm_sign y la escala.
+    arm_zero_offset: [0, 0, 0, 0]
+    arm_ref_pose: [3.1416, -0.059, 0.058, 0.0]   # rad: pose de reposo medida en el robot
+    # arm_require_calibration y arm_calibration_file los pone llc_bridge.launch.py
+    # (robot real); el emulador y Gazebo no exigen ni guardan calibración.
     arm_sign: [1, 1, 1, 1]            # sentido motor vs. sentido DH
     arm_lower: [-3.1416, -1.5708, -2.5, -2.5]   # rad, params.xacro (q1 = ±pi alcanza la bandeja)
     # q3 <= 0.1: con el eslabón 3 en L y el brazo en un solo plano, más allá el

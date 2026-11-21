@@ -124,3 +124,17 @@ def test_arm_gear_ratio_and_accel():
 
 def test_arm_limits():
     assert make_units().check_limits([0, 0, 3.3, -3.3]) == [2, 3]
+
+
+def test_arm_zero_for_pose_reads_back_reference():
+    u = ArmUnits(16384, 1.0, [0, 0, 0, 0], [1, -1, 1, -1],
+                 [-math.pi, -math.pi / 2, -2.5, -2.5], [math.pi, math.pi / 2, 0.1, 2.5])
+    counts = [642, 246, 236, -325]
+    ref = [math.pi, -0.059, 0.058, 0.3]
+    u.zero = u.zero_for_pose(counts, ref)
+    assert u.counts_to_rad(counts) == pytest.approx(ref, abs=1e-3)
+    assert u.rad_to_counts(ref) == counts
+    # Con signo +1: zero = c - q*k (J1 en pi: 642 - 8192).
+    assert u.zero[0] == 642 - 8192
+    with pytest.raises(ValueError):
+        u.zero_for_pose(counts[:3], ref)

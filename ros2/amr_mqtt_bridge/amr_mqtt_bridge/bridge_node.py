@@ -4,7 +4,8 @@ Telemetría MQTT (contrato v1) -> /odom, /tf, /imu/data, /joint_states,
 /battery_state, /llc/status, /arm/status.
 ROS -> MQTT: /cmd_vel (reenviado a cmd_rate_hz con valid_ms), servicios
 /llc/arm_command, /llc/set_gripper, /llc/set_estop, /llc/reset_odometry
-(esperan el ack del MCU).
+(esperan el ack del MCU) y /arm/calibrate (zero_offset del brazo con la pose de
+referencia arm_ref_pose).
 
 Mismo esqueleto que examples/ros2_mqtt/v2 (cola desde el hilo de paho +
 timer de drenado, STALE/LIVE, reset por boot_id, stop al cerrar).
@@ -16,6 +17,7 @@ import threading
 import time
 
 import rclpy
+import yaml
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
@@ -29,7 +31,7 @@ from diagnostic_msgs.msg import DiagnosticStatus
 from geometry_msgs.msg import TransformStamped, Twist, TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState, Imu, JointState
-from std_srvs.srv import SetBool
+from std_srvs.srv import SetBool, Trigger
 from tf2_ros import TransformBroadcaster
 
 from amr_interfaces.msg import ArmStatus, LlcStatus
@@ -105,6 +107,11 @@ class LlcBridge(Node):
         d('arm_upper', [math.pi, math.pi / 2, 0.1, 2.5])   # q3 <= 0.1: el codo no cruza el eslabón 2
         d('arm_default_accel', 2.0)
         d('arm_status_rate_hz', 10.0)
+        # Calibración por pose de referencia (servicio arm/calibrate).
+        d('arm_ref_pose', [0.0, 0.0, 0.0, 0.0])      # rad: pose física repetible
+        d('arm_calibration_file', 'none')    # 'none' o '' = sin persistencia (SIL)
+        d('arm_require_calibration', False)   # true: sin calibrar en este arranque del
+        #                                       MCU, rechaza enable/goal/home
         d('gripper_joint', 'gripper_finger_joint')
         d('gripper_travel', 0.035)
         # Batería LiPo 6S
@@ -136,6 +143,14 @@ class LlcBridge(Node):
         self.arm = ArmUnits(int(g('arm_counts_per_rev').value), float(g('arm_gear_ratio').value),
                             list(g('arm_zero_offset').value), list(g('arm_sign').value),
                             list(g('arm_lower').value), list(g('arm_upper').value))
+        self.arm_ref_pose = [float(v) for v in g('arm_ref_pose').value]
+        calib_file = g('arm_calibration_file').value
+        self.arm_calib_file = ('' if calib_file.strip().lower() in ('', 'none')
+                               else os.path.expanduser(calib_file))
+        self.arm_require_calib = bool(g('arm_require_calibration').value)
+        self.arm_calib_boot = None     # boot_id del MCU en el que se calibró
+        self.arm_last = None           # (boot_id, monotonic, counts, rpm) de llc/arm
+        self.load_arm_calibration()
         self.arm_default_accel = float(g('arm_default_accel').value)
         self.arm_status_period = 1.0 / max(float(g('arm_status_rate_hz').value), 0.1)
         self.gripper_joint = g('gripper_joint').value
@@ -188,6 +203,8 @@ class LlcBridge(Node):
                             callback_group=services)
         self.create_service(SetBool, 'llc/set_estop', self.srv_estop, callback_group=services)
         self.create_service(ResetOdometry, 'llc/reset_odometry', self.srv_reset_odom,
+                            callback_group=services)
+        self.create_service(Trigger, 'arm/calibrate', self.srv_arm_calibrate,
                             callback_group=services)
 
         # Timers en reloj monotónico: no dependen de /clock (con use_sim_time, un timer
@@ -286,6 +303,10 @@ class LlcBridge(Node):
             self.cmd = None              # no reenviar comandos previos al reset
             for waiter in self.pending.values():
                 waiter[0].set()          # libera servicios en espera (sin ack)
+        if self.arm_require_calib and boot_id != self.arm_calib_boot:
+            self.get_logger().warning(
+                'brazo sin calibrar en este arranque: ponerlo en arm_ref_pose '
+                f'{self.arm_ref_pose} y llamar a arm/calibrate (enable/goal/home bloqueados)')
 
     def on_offline(self):
         self.get_logger().warning('MCU offline (LWT)')
@@ -344,6 +365,7 @@ class LlcBridge(Node):
         self.wheel_errors = d['rc_err']
 
     def on_arm(self, d, stamp):
+        self.arm_last = (d['boot_id'], time.monotonic(), list(d['pos']), list(d['vel']))
         grip = d['grip']
         msg = JointState()
         msg.header.stamp = stamp
@@ -514,6 +536,12 @@ class LlcBridge(Node):
         if op is None:
             res.accepted, res.message = False, f'op desconocida {req.op}'
             return res
+        if (self.arm_require_calib and op in ('goal', 'enable', 'home')
+                and (self.boot_id is None or self.arm_calib_boot != self.boot_id)):
+            res.accepted = False
+            res.message = (f'brazo sin calibrar: ponerlo en arm_ref_pose {self.arm_ref_pose} '
+                           'y llamar a arm/calibrate')
+            return res
         fields = {'op': op}
         if op == 'goal':
             q = list(req.positions)
@@ -533,6 +561,80 @@ class LlcBridge(Node):
             fields.update(pos=self.arm.rad_to_counts(q), acc=rpm_s, dec=rpm_s)
         res.accepted, res.seq, res.message = self.send_and_wait('cmd/arm', **fields)
         return res
+
+    # ------------------------------------------------------- calibración brazo
+    def srv_arm_calibrate(self, req, res):
+        """El brazo está quieto en arm_ref_pose: esos counts definen zero_offset."""
+        last = self.arm_last
+        if last is None or last[0] != self.boot_id or time.monotonic() - last[1] > 0.5:
+            res.success, res.message = False, 'sin telemetría reciente del brazo (llc/arm)'
+            return res
+        _, _, counts, rpm = last
+        if any(abs(v) > 1 for v in rpm):
+            res.success, res.message = False, f'el brazo se está moviendo (rpm {rpm})'
+            return res
+        bad = self.arm.check_limits(self.arm_ref_pose) if len(self.arm_ref_pose) == self.arm.n \
+            else list(range(self.arm.n))
+        if bad:
+            res.success = False
+            res.message = f'arm_ref_pose inválida o fuera de límites: {self.arm_ref_pose}'
+            return res
+        zero = self.arm.zero_for_pose(counts, self.arm_ref_pose)
+        delta = [z - o for z, o in zip(zero, self.arm.zero)]
+        self.arm.zero = zero
+        self.arm_calib_boot = self.boot_id
+        saved = self.save_arm_calibration(counts)
+        res.success = True
+        res.message = (f'zero_offset {zero} (cambio {delta} counts) con counts {counts}'
+                       + ('' if saved else '; no se pudo guardar el archivo'))
+        self.get_logger().info(f'brazo calibrado en arm_ref_pose: {res.message}')
+        return res
+
+    def save_arm_calibration(self, counts):
+        if not self.arm_calib_file:
+            return True
+        data = {'zero_offset': self.arm.zero, 'sign': self.arm.sign,
+                'counts_per_rad': self.arm.counts_per_rad, 'ref_pose': self.arm_ref_pose,
+                'counts': [int(c) for c in counts], 'boot_id': self.boot_id,
+                'stamp': time.strftime('%Y-%m-%d %H:%M:%S')}
+        try:
+            os.makedirs(os.path.dirname(self.arm_calib_file) or '.', exist_ok=True)
+            tmp = self.arm_calib_file + '.tmp'
+            with open(tmp, 'w') as f:
+                yaml.safe_dump(data, f, default_flow_style=None)
+            os.replace(tmp, self.arm_calib_file)
+            return True
+        except OSError as exc:
+            self.get_logger().error(f'no se pudo guardar {self.arm_calib_file}: {exc}')
+            return False
+
+    def load_arm_calibration(self):
+        """Usa la última calibración si es de la misma configuración (signo y escala).
+
+        Solo cuenta como calibrado si el MCU no se ha reiniciado desde entonces (mismo
+        boot_id): tras un apagado el brazo cae y la cuenta guardada deja de valer.
+        """
+        if not self.arm_calib_file:
+            return
+        try:
+            with open(self.arm_calib_file) as f:
+                data = yaml.safe_load(f) or {}
+            zero = [int(z) for z in data['zero_offset']]
+            same = (list(data['sign']) == self.arm.sign and len(zero) == self.arm.n
+                    and abs(float(data['counts_per_rad']) - self.arm.counts_per_rad) < 1e-6)
+        except FileNotFoundError:
+            return
+        except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
+            self.get_logger().warning(f'calibración {self.arm_calib_file} ignorada: {exc}')
+            return
+        if not same:
+            self.get_logger().warning(
+                f'calibración {self.arm_calib_file} ignorada: arm_sign o escala distintos')
+            return
+        self.arm.zero = zero
+        self.arm_calib_boot = data.get('boot_id')
+        self.get_logger().info(f"zero_offset {zero} de {self.arm_calib_file} "
+                               f"({data.get('stamp', '?')})")
 
     def srv_gripper(self, req, res):
         res.accepted, res.seq, res.message = self.send_and_wait(
