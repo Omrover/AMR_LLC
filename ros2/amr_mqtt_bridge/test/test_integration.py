@@ -270,10 +270,24 @@ def test_end_to_end_firmware(ros):
                         abs(odom[-1].twist.twist.angular.z) < 2e-2, 1.5)
         assert time.monotonic() - stop_t < 0.2 + 0.5 + 0.3   # timeout + rampa + margen
 
-        # Brazo: hasta M5 (CAN) el firmware solo acepta disable/clear.
+        # Brazo: native_sim simula los 4 GIM6010 (posición multivuelta, 0xA3).
         arm = probe.create_client(ArmCommand, 'llc/arm_command')
         assert call(arm, ArmCommand.Request(op=ArmCommand.Request.DISABLE)).accepted
-        assert not call(arm, ArmCommand.Request(op=ArmCommand.Request.ENABLE)).accepted
+        res = call(arm, ArmCommand.Request(op=ArmCommand.Request.ENABLE))
+        assert res.accepted, res.message
+        goal = [0.0, -0.05, 0.05, -0.05]          # cruza el cero de las juntas 2-4
+        res = call(arm, ArmCommand.Request(op=ArmCommand.Request.GOAL, positions=goal,
+                                           accelerations=[2.0] * 4))
+        assert res.accepted, res.message
+
+        def arm_at_goal():
+            arm_msgs = [m for m in joints[-10:] if 'arm_joint_1' in m.name]
+            if not arm_msgs:
+                return False
+            q = dict(zip(arm_msgs[-1].name, arm_msgs[-1].position))
+            return all(abs(q[f'arm_joint_{i + 1}'] - g) < 2e-3 for i, g in enumerate(goal))
+        assert wait_for(arm_at_goal, 5.0)
+        assert call(arm, ArmCommand.Request(op=ArmCommand.Request.DISABLE)).accepted
         grip = probe.create_client(SetGripper, 'llc/set_gripper')
         res = call(grip, SetGripper.Request(position=1.0, max_current_a=0.8))
         assert res.accepted, res.message

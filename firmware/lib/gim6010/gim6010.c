@@ -39,6 +39,13 @@ uint8_t gim_encode_u32(uint8_t out[8], uint8_t cmd, uint32_t value)
 	return 5;
 }
 
+void gim_decode_a3(const uint8_t d[8], gim_a3_t *out)
+{
+	out->single = get_u16(&d[1]);
+	out->multi = (int32_t)((uint32_t)d[3] | ((uint32_t)d[4] << 8) | ((uint32_t)d[5] << 16) |
+			       ((uint32_t)d[6] << 24));
+}
+
 void gim_decode_a4(const uint8_t d[8], gim_a4_t *out)
 {
 	out->temp_c = (int8_t)d[1];
@@ -58,11 +65,24 @@ void gim_decode_ae(const uint8_t d[8], gim_ae_t *out)
 
 int32_t gim_unwrap(int32_t prev, bool valid, uint16_t pos16)
 {
+	const int32_t rev = GIM_COUNTS_PER_REV;
+	int32_t now = (int32_t)(pos16 % (uint16_t)GIM_COUNTS_PER_REV);
+	int32_t d;
+
 	if (!valid) {
-		return (int32_t)(int16_t)pos16;
+		/* Primera lectura: tal cual (0..16383), como la ve el motor al arrancar. */
+		return now;
 	}
-	/* Diferencia modular de 16 bits con signo, sumada en 32 bits sin desbordar. */
-	return (int32_t)((uint32_t)prev + (uint32_t)(int32_t)(int16_t)(uint16_t)(pos16 - (uint16_t)prev));
+	/* El 0xA4 da la posición dentro de una vuelta: la diferencia con la lectura
+	 * anterior se lleva a [-rev/2, rev/2) (entre lecturas de 20 ms la junta se
+	 * mueve mucho menos de media vuelta). */
+	d = now - (int32_t)(((prev % rev) + rev) % rev);
+	if (d >= rev / 2) {
+		d -= rev;
+	} else if (d < -rev / 2) {
+		d += rev;
+	}
+	return prev + d;
 }
 
 /* Envía y espera la confirmación: trama de addr con data[0] == cmd y DLC >= min_len.
@@ -101,6 +121,17 @@ static gim_status_t simple(gim_bus_t *b, uint8_t addr, uint8_t cmd, uint8_t min_
 	uint8_t tx[1] = {cmd};
 
 	return xfer(b, addr, tx, 1, min_len, rx);
+}
+
+gim_status_t gim_read_a3(gim_bus_t *b, uint8_t addr, gim_a3_t *out)
+{
+	uint8_t rx[8];
+	gim_status_t st = simple(b, addr, GIM_CMD_READ_A3, 7, rx);
+
+	if (st == GIM_OK) {
+		gim_decode_a3(rx, out);
+	}
+	return st;
 }
 
 gim_status_t gim_read_a4(gim_bus_t *b, uint8_t addr, gim_a4_t *out)

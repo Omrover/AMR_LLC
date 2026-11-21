@@ -60,17 +60,24 @@ static void test_frames(void)
 
 static void test_unwrap(void)
 {
-	int32_t p = gim_unwrap(0, false, 0xFFF0); /* primera lectura con signo */
+	/* El 0xA4 reporta 0..16383 (una vuelta). Caso real de J2: 16360 -> 5 -> 16329. */
+	int32_t p = gim_unwrap(0, false, 253);     /* primera lectura tal cual */
 
-	CHECK(p == -16);
-	p = gim_unwrap(p, true, 0x0010);           /* cruza el cero hacia arriba */
-	CHECK(p == 16);
-	p = gim_unwrap(30000, true, 40000);        /* pasa de 32767 sin saltar */
-	CHECK(p == 40000);
-	p = gim_unwrap(p, true, (uint16_t)70000);  /* 70000 envuelto */
-	CHECK(p == 70000);
-	p = gim_unwrap(-70000, true, (uint16_t)(-70100));
-	CHECK(p == -70100);
+	CHECK(p == 253);
+	p = gim_unwrap(p, true, 16300);            /* baja y cruza el cero */
+	CHECK(p == -84);
+	p = gim_unwrap(p, true, 5);                /* vuelve a subir y lo cruza otra vez */
+	CHECK(p == 5);
+	p = gim_unwrap(p, true, 16329);
+	CHECK(p == -55);
+	p = gim_unwrap(0, false, 16370);           /* arranque justo debajo del borde */
+	CHECK(p == 16370);
+	p = gim_unwrap(p, true, 10);               /* sube y cruza 16384 */
+	CHECK(p == 16394);
+	p = gim_unwrap(-20000, true, (uint16_t)(((-20100 % 16384) + 16384) % 16384));
+	CHECK(p == -20100);                         /* varias vueltas, prev negativo */
+	p = gim_unwrap(40000, true, (uint16_t)(40500 % 16384));
+	CHECK(p == 40500);
 }
 
 typedef struct {
@@ -110,15 +117,15 @@ static void test_arm_goal_and_limits(void)
 	float acc[4] = {200, 200, 200, 200};
 
 	rig_init(&r);
-	r.sim.m[1].pos = -300.0; /* juntas fuera de cero al encender */
-	r.sim.m[1].target = -300.0;
+	r.sim.m[1].pos = 300.0; /* juntas fuera de cero al encender */
+	r.sim.m[1].target = 300.0;
 	CHECK(!gim_arm_command(&r.arm, GIM_ARM_OP_GOAL, goal, acc, acc, &msg));  /* deshabilitado */
 	CHECK(!gim_arm_command(&r.arm, GIM_ARM_OP_ENABLE, NULL, NULL, NULL, &msg)); /* sin posición */
 	run(&r, 0.04);
-	CHECK(r.arm.j[1].pos == -300);
+	CHECK(r.arm.j[1].pos == 300);
 	CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_ENABLE, NULL, NULL, NULL, &msg));
 	run(&r, 0.1);
-	CHECK(r.arm.j[1].pos == -300 && gim_arm_in_pos(&r.arm, 1)); /* habilitar no mueve */
+	CHECK(r.arm.j[1].pos == 300 && gim_arm_in_pos(&r.arm, 1)); /* habilitar no mueve */
 
 	CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_GOAL, goal, acc, acc, &msg));
 	run(&r, 0.1);
@@ -139,9 +146,64 @@ static void test_arm_goal_and_limits(void)
 	CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_HOME, NULL, NULL, NULL, &msg));
 	run(&r, 3.0);
 	for (int i = 0; i < 4; i++) {
-		CHECK(r.arm.j[i].pos == 0);
+		CHECK(r.arm.j[i].pos == (i == 1 ? 300 : 0)); /* vuelve a la pose de encendido */
 	}
 	CHECK(!gim_arm_bus_fault(&r.arm) && !gim_arm_motor_fault(&r.arm));
+}
+
+/* 0xA4 da el ángulo dentro de una vuelta (un motor en -300 lo reporta como 16084);
+ * la posición se lee multivuelta con 0xA3, en la misma referencia que 0xDA. */
+static void test_multiturn_position(void)
+{
+	rig_t r;
+	const char *msg = NULL;
+	float acc[4] = {200, 200, 200, 200};
+
+	rig_init(&r);
+	r.sim.m[1].pos = -300.0;
+	r.sim.m[1].target = -300.0;
+	r.sim.m[2].pos = 50000.0;  /* el contador conserva vueltas entre encendidos */
+	r.sim.m[2].target = 50000.0;
+	run(&r, 0.04);
+	CHECK(r.arm.j[1].pos == -300 && r.arm.j[2].pos == 50000);
+	CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_ENABLE, NULL, NULL, NULL, &msg));
+	run(&r, 0.5);
+	CHECK(fabs(r.sim.m[1].pos + 300.0) < 1.0 && fabs(r.sim.m[2].pos - 50000.0) < 1.0);
+	{
+		/* Límites del MCU respecto a la pose de encendido. */
+		int32_t far[4] = {0, -300, 0, 0};
+		int32_t near[4] = {0, -300, 50500, 0};
+
+		CHECK(!gim_arm_command(&r.arm, GIM_ARM_OP_GOAL, far, acc, acc, &msg));
+		CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_GOAL, near, acc, acc, &msg));
+		run(&r, 3.0);
+		CHECK(r.arm.j[2].pos == 50500 && gim_arm_in_pos(&r.arm, 2));
+		CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_HOME, NULL, NULL, NULL, &msg));
+		run(&r, 3.0);
+		CHECK(r.arm.j[2].pos == 50000 && r.arm.j[1].pos == -300);
+	}
+
+	/* Cruce del cero en marcha: sin saltos. */
+	rig_init(&r);
+	r.sim.m[3].pos = 64.0;
+	r.sim.m[3].target = 64.0;
+	run(&r, 0.04);
+	CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_ENABLE, NULL, NULL, NULL, &msg));
+	{
+		int32_t goal[4] = {0, 0, 0, -400};
+
+		CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_GOAL, goal, acc, acc, &msg));
+	}
+	run(&r, 3.0);
+	CHECK(r.arm.j[3].pos == -400 && gim_arm_in_pos(&r.arm, 3));
+	CHECK(fabs(r.sim.m[3].pos + 400.0) < 1.0);
+	{
+		int32_t goal[4] = {0, 0, 0, 200};
+
+		CHECK(gim_arm_command(&r.arm, GIM_ARM_OP_GOAL, goal, acc, acc, &msg));
+	}
+	run(&r, 3.0);
+	CHECK(r.arm.j[3].pos == 200 && gim_arm_in_pos(&r.arm, 3));
 }
 
 static void test_hold_offline_and_faults(void)
@@ -198,6 +260,7 @@ int main(void)
 	test_frames();
 	test_unwrap();
 	test_arm_goal_and_limits();
+	test_multiturn_position();
 	test_hold_offline_and_faults();
 	printf("gim6010: %s (%d failures)\n", failures ? "FAILED" : "PASSED", failures);
 	return failures ? 1 : 0;

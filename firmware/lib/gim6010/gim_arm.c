@@ -13,7 +13,8 @@ void gim_arm_default_cfg(gim_arm_cfg_t *cfg)
 	memset(cfg, 0, sizeof(*cfg));
 	for (int i = 0; i < GIM_ARM_JOINTS; i++) {
 		cfg->addr[i] = (uint8_t)(i + 1);
-		/* Una vuelta a cada lado: los límites finos (rad) los aplica la NUC. */
+		/* Una vuelta a cada lado de la posición de encendido: los límites finos
+		 * (rad) los aplica la NUC. */
 		cfg->pos_min[i] = -GIM_COUNTS_PER_REV;
 		cfg->pos_max[i] = GIM_COUNTS_PER_REV;
 	}
@@ -105,9 +106,11 @@ bool gim_arm_command(gim_arm_t *a, gim_arm_op_t op, const int32_t pos[GIM_ARM_JO
 			return false;
 		}
 		for (int i = 0; i < GIM_ARM_JOINTS; i++) {
-			int32_t t = op == GIM_ARM_OP_HOME ? 0 : pos[i];
+			/* home = posición de encendido (el reposo del brazo). */
+			int64_t rel = (int64_t)(op == GIM_ARM_OP_HOME ? a->j[i].boot_pos : pos[i]) -
+				      a->j[i].boot_pos;
 
-			if (t < a->cfg.pos_min[i] || t > a->cfg.pos_max[i]) {
+			if (rel < a->cfg.pos_min[i] || rel > a->cfg.pos_max[i]) {
 				*msg = "objetivo fuera de los limites del MCU";
 				return false;
 			}
@@ -118,7 +121,7 @@ bool gim_arm_command(gim_arm_t *a, gim_arm_op_t op, const int32_t pos[GIM_ARM_JO
 		}
 		for (int i = 0; i < GIM_ARM_JOINTS; i++) {
 			if (op == GIM_ARM_OP_HOME) {
-				set_goal(a, i, 0, def, def);
+				set_goal(a, i, a->j[i].boot_pos, def, def);
 			} else {
 				set_goal(a, i, pos[i], crpm(acc[i]), crpm(dec[i]));
 			}
@@ -162,6 +165,7 @@ static void service(gim_arm_t *a, int i, bool read_ae)
 	gim_joint_t *j = &a->j[i];
 	uint8_t addr = a->cfg.addr[i];
 	gim_a4_t a4;
+	gim_a3_t a3;
 	gim_status_t st;
 
 	/* Un comando fallido queda pendiente y se reintenta el siguiente ciclo. */
@@ -188,9 +192,16 @@ static void service(gim_arm_t *a, int i, bool read_ae)
 	}
 
 	st = gim_read_a4(a->bus, addr, &a4);
+	if (st == GIM_OK) {
+		/* Posición multivuelta: la misma referencia que 0xDA absoluto. */
+		st = gim_read_a3(a->bus, addr, &a3);
+	}
 	mark(a, j, st == GIM_OK);
 	if (st == GIM_OK) {
-		j->pos = gim_unwrap(j->pos, j->pos_valid, a4.pos16);
+		if (!j->pos_valid) {
+			j->boot_pos = a3.multi;
+		}
+		j->pos = a3.multi;
 		j->pos_valid = true;
 		j->vel_rpm = (float)a4.vel_crpm / 100.0f;
 		j->cur_a = (float)a4.cur_ma / 1000.0f;

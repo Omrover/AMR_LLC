@@ -73,7 +73,7 @@ Todos llevan `v`, `boot_id` y `seq`.
 
 **Deduplicación:** el MCU recuerda el último `seq` aceptado por topic. Si llega el mismo `seq` (retransmisión QoS 1), responde `duplicate` y no lo ejecuta de nuevo.
 
-**Brazo:** `enable` energiza las 4 juntas en su posición actual (no mueve nada) y requiere haber leído la posición de todas. `goal` y `home` (todas a 0 counts) se rechazan con el brazo deshabilitado, con e-stop activo o fuera de los límites de seguridad del MCU (`TLALOC_ARM_LIMIT_COUNTS`, ±16384 counts por defecto). Con e-stop el brazo **frena y mantiene** la posición: no se libera (0xCF) porque caería por gravedad. `disable` sí lo libera.
+**Brazo:** `enable` energiza las 4 juntas en su posición actual (no mueve nada) y requiere haber leído la posición de todas. `goal` y `home` (volver a la posición leída al encender, que es el reposo) se rechazan con el brazo deshabilitado, con e-stop activo o fuera de los límites de seguridad del MCU (`TLALOC_ARM_LIMIT_COUNTS`, ±16384 counts por defecto **alrededor de la posición de encendido**). `pos` es la posición multivuelta del motor (0xA3, la misma referencia que 0xDA): su cero no es una pose conocida y conserva vueltas entre encendidos, así que la NUC la calibra con `/arm/calibrate` (pose de reposo conocida). Con e-stop el brazo **frena y mantiene** la posición: no se libera (0xCF) porque caería por gravedad. `disable` sí lo libera.
 
 **E-stop:** se activa por `cmd/estop {"active": true}` o por el botón físico (NC entre 3.3 V y PTB21 de Tlaloc). La base queda en rueda libre y el brazo sostenido. El botón **enclava** el paro: soltarlo no reanuda nada; hace falta `cmd/estop {"active": false}`, que el MCU rechaza (`rejected`, `msg` "e-stop físico activo") mientras el bit 7 siga en 1.
 

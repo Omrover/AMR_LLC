@@ -18,7 +18,7 @@
     arm_ref_pose: [3.1416, -0.059, 0.058, 0.0]   # rad: pose de reposo medida en el robot
     # arm_require_calibration y arm_calibration_file los pone llc_bridge.launch.py
     # (robot real); el emulador y Gazebo no exigen ni guardan calibración.
-    arm_sign: [1, 1, 1, 1]            # sentido motor vs. sentido DH
+    arm_sign: [-1, -1, -1, -1]        # sentido motor vs. sentido DH (medido en el robot)
     arm_lower: [-3.1416, -1.5708, -2.5, -2.5]   # rad, params.xacro (q1 = ±pi alcanza la bandeja)
     # q3 <= 0.1: con el eslabón 3 en L y el brazo en un solo plano, más allá el
     # antebrazo atraviesa el eslabón 2 (el codo no puede cruzarlo). TBD con el CAD.

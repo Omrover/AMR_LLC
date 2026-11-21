@@ -69,10 +69,10 @@ config TLALOC_ARM_LIMIT_COUNTS
 	int "Límite de seguridad del brazo en el MCU (counts, simétrico)"
 	default 16384
 	help
-	  Ningún goal del brazo puede salir de +-este valor por junta. Con 16384
-	  counts por vuelta del eje de salida equivale a +-360 grados. Si los
-	  counts resultan ser del rotor (reductor 8:1, arm_gear_ratio = 8 en
-	  arm.yaml), subirlo a 131072.
+	  Ningún goal del brazo puede alejarse más de +-este valor de la posición
+	  leída al encender (multivuelta, 0xA3), que es el reposo del brazo. Con
+	  16384 counts por vuelta del eje de salida equivale a +-360 grados. Los
+	  límites finos en rad los aplica la NUC (arm.yaml).
 
 config TLALOC_SIGN_WHEEL1_FL
 	int "Signo rueda 1 (fl, RoboClaw 128 M1)"

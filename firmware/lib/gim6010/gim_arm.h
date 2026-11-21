@@ -44,6 +44,10 @@ typedef struct {
 typedef struct {
 	bool online;
 	bool pos_valid;
+	/* Primera posición leída (multivuelta, 0xA3): los límites del MCU y home se
+	 * toman respecto a ella, porque el contador del motor conserva vueltas entre
+	 * encendidos y su cero no es una pose conocida (la calibra la NUC). */
+	int32_t boot_pos;
 	int32_t pos;                       /* counts desenvueltos */
 	float vel_rpm;
 	float cur_a;

@@ -51,6 +51,13 @@ static void reply(gim_sim_t *s, const gim_sim_motor_t *m, const uint8_t *d, uint
 	s->q_count++;
 }
 
+static void put_u32(uint8_t *b, uint32_t v)
+{
+	for (int i = 0; i < 4; i++) {
+		b[i] = (uint8_t)(v >> (8 * i));
+	}
+}
+
 static uint32_t get_u32(const uint8_t *b)
 {
 	return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
@@ -74,13 +81,23 @@ static int sim_send(void *ctx, uint16_t id, const uint8_t *data, uint8_t len)
 	}
 	r[0] = data[0];
 	switch (data[0]) {
+	case GIM_CMD_READ_A3: {
+		int32_t p = (int32_t)lround(m->pos);
+
+		put_u16(&r[1], (uint16_t)(((p % GIM_COUNTS_PER_REV) + GIM_COUNTS_PER_REV) %
+					  GIM_COUNTS_PER_REV));
+		put_u32(&r[3], (uint32_t)p);
+		reply(s, m, r, 7);
+		break;
+	}
 	case GIM_CMD_READ_A4: {
 		int32_t p = (int32_t)lround(m->pos);
 
 		r[1] = (uint8_t)m->temp_c;
 		put_u16(&r[2], (uint16_t)(int16_t)(fabs(m->vel) > 1.0 ? 400 : 50)); /* mA */
 		put_u16(&r[4], (uint16_t)(int16_t)lround(m->vel * 60.0 / GIM_COUNTS_PER_REV * 100.0));
-		put_u16(&r[6], (uint16_t)p);
+		put_u16(&r[6], (uint16_t)(((p % GIM_COUNTS_PER_REV) + GIM_COUNTS_PER_REV) %
+					  GIM_COUNTS_PER_REV)); /* una vuelta, como el real */
 		reply(s, m, r, 8);
 		break;
 	}
@@ -122,7 +139,13 @@ static int sim_send(void *ctx, uint16_t id, const uint8_t *data, uint8_t len)
 			m->target = data[1] == 0U ? t : m->pos + t;
 			m->enabled = true; /* un comando de posición vuelve a energizar */
 			m->pos_cmds++;
-			memcpy(&r[1], &data[1], 5);
+			{ /* responde como 0xA3 */
+				int32_t p = (int32_t)lround(m->pos);
+
+				put_u16(&r[1], (uint16_t)(((p % GIM_COUNTS_PER_REV) + GIM_COUNTS_PER_REV) %
+							  GIM_COUNTS_PER_REV));
+				put_u32(&r[3], (uint32_t)p);
+			}
 			reply(s, m, r, 7);
 		}
 		break;
