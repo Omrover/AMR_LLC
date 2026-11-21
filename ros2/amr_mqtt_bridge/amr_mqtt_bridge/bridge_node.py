@@ -102,7 +102,7 @@ class LlcBridge(Node):
         d('arm_zero_offset', [0, 0, 0, 0])
         d('arm_sign', [1, 1, 1, 1])
         d('arm_lower', [-math.pi, -math.pi / 2, -2.5, -2.5])
-        d('arm_upper', [math.pi, math.pi / 2, 2.5, 2.5])
+        d('arm_upper', [math.pi, math.pi / 2, 0.1, 2.5])   # q3 <= 0.1: el codo no cruza el eslabón 2
         d('arm_default_accel', 2.0)
         d('arm_status_rate_hz', 10.0)
         d('gripper_joint', 'gripper_finger_joint')
