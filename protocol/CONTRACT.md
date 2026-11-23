@@ -41,7 +41,7 @@ Además, la telemetría formateada en C se valida con el decodificador de Python
 | `llc/odom` | 0 | 50 Hz | `x`, `y` [m], `yaw` [rad] en `odom`; `vx`, `vy` [m/s], `wz` [rad/s] en `base_footprint`; `cov`: [6] varianzas ≥ 0 de (x, y, yaw, vx, vy, wz) |
 | `llc/imu` | 0 | 100 Hz | `q`: [w, x, y, z] Game Rotation Vector de la BNO080 (norma 0.9–1.1); `gyro`: [3] rad/s; `acc`: [3] m/s²; `acc_status`: 0–3 (precisión SH-2) |
 | `llc/wheels` | 0 | 20 Hz | `pos`: [4] rad acumulados; `vel`: [4] rad/s; `rc_err`: [2] status de error de RoboClaw 128 y 129 (≥ 0). Orden de ruedas: **fl, rl, rr, fr** |
-| `llc/arm` | 0 | 50 Hz | `enabled`: bool; `pos`: [4] int counts absolutos (0xA4); `vel`: [4] rpm; `cur`: [4] A; `temp`: [4] °C; `in_pos`: [4] bool; `fault`: [4] código 0xAE (0 = ok, 255 = la junta no responde por CAN); `grip`: {`pos` 0–1 (0 = abierto), `cur` A (ACS712), `grasped` bool} |
+| `llc/arm` | 0 | 50 Hz | `enabled`: bool; `pos`: [4] int counts multivuelta del motor (0xA3); `vel`: [4] rpm; `cur`: [4] A; `temp`: [4] °C; `in_pos`: [4] bool; `fault`: [4] código 0xAE (0 = ok, 255 = la junta no responde por CAN); `grip`: {`pos` 0–1 (0 = abierto), `cur` A (ACS712), `grasped` bool} |
 | `llc/battery` | 0 | 1 Hz | `volt`: tensión principal [V] (RoboClaw cmd 24); opcional `logic_volt` [V] |
 | `llc/status` | 1 | 2 Hz | `state`: `init`/`ok`/`estop`/`fault`; `estop` bool; `faults` bitmask (abajo); `wd` bool (watchdog de velocidad disparado); `cpu` 0–1 |
 | `llc/ack` | 1 | por comando | `seq`; `cmd`: `arm`/`gripper`/`estop`/`odom_reset`; `result`: `ok`/`rejected`/`busy`/`duplicate`; opcional `msg` (≤ 64 chars) |
@@ -77,7 +77,7 @@ Todos llevan `v`, `boot_id` y `seq`.
 
 **E-stop:** se activa por `cmd/estop {"active": true}` o por el botón físico (NC entre 3.3 V y PTB21 de Tlaloc). La base queda en rueda libre y el brazo sostenido. El botón **enclava** el paro: soltarlo no reanuda nada; hace falta `cmd/estop {"active": false}`, que el MCU rechaza (`rejected`, `msg` "e-stop físico activo") mientras el bit 7 siga en 1.
 
-**Gripper:** al cerrar, el MCU avanza el servo hasta `pos` o hasta que la corriente del ACS712 supera `max_cur`. En ese punto fija `grip.grasped = true` y mantiene la posición.
+**Gripper:** motorreductor DC con un DRV8833 y el ACS712 en serie con el motor; sin sensor de posición, `grip.pos` se estima por tiempo de movimiento y se corrige en los topes. Al cerrar, el MCU avanza hasta `pos` o hasta que el motor se traba (corriente > min(`max_cur`, corriente de bloqueo)); si eso pasa antes del tope de cerrado fija `grip.grasped = true` y **sostiene con control de corriente** (PI: |I| = `max_cur`). Un nuevo `cmd/gripper` con el gripper sosteniendo solo cambia la fuerza (`max_cur`); `pos` = 0 abre hasta el tope y suelta. Sobrecorriente sostenida o nFAULT del DRV8833: falla 5, abre un poco y se detiene (se borra con el siguiente comando). Con e-stop deja de moverse pero sigue sosteniendo la pieza.
 
 ## Ejemplos
 

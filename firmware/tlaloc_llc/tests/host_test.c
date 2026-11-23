@@ -36,12 +36,15 @@ typedef struct {
 	llc_imu_t imu;
 	llc_t llc;
 	uint32_t now;
-	/* io falso: servo + ACS712 */
-	uint32_t servo_us;
-	uint32_t servo_writes;
+	/* io falso: motor DC del gripper (DRV8833) + ACS712 */
+	float grip_duty;      /* última salida al puente H */
+	bool grip_sleep;
+	uint32_t grip_writes;
+	float grip_true;      /* posición real 0..1 */
 	float object_at;      /* posición del gripper donde toca la pieza (<0: sin pieza) */
-	float stall_a;        /* corriente al apretar la pieza */
+	float stall_a;        /* corriente trabado con duty 1 */
 	bool adc_ok;
+	bool drv_fault;       /* nFAULT del DRV8833 */
 	/* verdad del terreno */
 	double x, y, yaw;
 	uint32_t next_vel_ms;
@@ -52,26 +55,57 @@ typedef struct {
 
 static const float zero_mv = 1650.0f;   /* 2.5 V del ACS712 a través del divisor 2/3 */
 
-static int io_servo(void *ctx, uint32_t us)
+static int io_grip_drive(void *ctx, float duty, bool sleep)
 {
 	rig_t *r = ctx;
 
-	r->servo_us = us;
-	r->servo_writes++;
+	r->grip_duty = duty;
+	r->grip_sleep = sleep;
+	r->grip_writes++;
 	return 0;
+}
+
+static bool io_grip_fault(void *ctx)
+{
+	return ((rig_t *)ctx)->drv_fault;
+}
+
+static float grip_d(const rig_t *r)
+{
+	return r->grip_sleep ? 0.0f : r->grip_duty;
+}
+
+static bool grip_blocked(const rig_t *r, float d)
+{
+	return (d > 0.0f && r->grip_true >= 1.0f) || (d < 0.0f && r->grip_true <= 0.0f) ||
+	       (d > 0.0f && r->object_at >= 0.0f && r->grip_true >= r->object_at);
+}
+
+/* Motor real: carrera completa en travel_ms a move_duty; trabado, I = |d| * stall_a. */
+static void grip_motor_step(rig_t *r, double dt)
+{
+	float d = grip_d(r);
+	const grip_cfg_t *c = &r->llc.cfg.grip;
+
+	if (!grip_blocked(r, d)) {
+		float v = d / c->move_duty / ((float)c->travel_ms * 1e-3f);
+
+		r->grip_true += v * (float)dt;
+		r->grip_true = r->grip_true < 0.0f ? 0.0f : (r->grip_true > 1.0f ? 1.0f : r->grip_true);
+	}
 }
 
 static int io_adc(void *ctx, float *mv)
 {
 	rig_t *r = ctx;
-	float amps = 0.05f;   /* consumo en vacío del servo */
+	float d = grip_d(r);
+	float amps;
 
 	if (!r->adc_ok) {
 		return -5;
 	}
-	if (r->object_at >= 0.0f && r->llc.grip.pos >= r->object_at) {
-		amps = r->stall_a;
-	}
+	amps = grip_blocked(r, d) ? fabsf(d) * r->stall_a
+				  : (d != 0.0f ? 0.1f + 0.2f * fabsf(d) : 0.0f);
 	*mv = zero_mv + amps * r->llc.cfg.grip.mv_per_a;
 	return 0;
 }
@@ -95,16 +129,18 @@ static void rig_init_ex(rig_t *r, bool can)
 	r->no_can = !can;
 	r->now = 1000;
 	r->object_at = -1.0f;
-	r->stall_a = 1.5f;
+	r->stall_a = 2.5f;
 	r->adc_ok = true;
+	r->grip_sleep = true;
 	rc_sim_init(&r->rc, 128, 129);
 	bno_sim_init(&r->bno);
 	rt = rc_sim_transport(&r->rc);
 	bt = bno_sim_transport(&r->bno);
 	gim_sim_init(&r->gim);
 	gt = gim_sim_transport(&r->gim);
-	io.servo_set_us = io_servo;
+	io.grip_drive = io_grip_drive;
 	io.adc_read_mv = io_adc;
+	io.grip_fault = io_grip_fault;
 	io.ctx = r;
 	llc_default_cfg(&cfg);
 	CHECK(llc_init(&r->llc, &cfg, &rt, r->no_can ? NULL : &gt, &io));
@@ -170,6 +206,7 @@ static void run(rig_t *r, double seconds, bool stream, float vx, float vy, float
 		bno_sim_set_motion(&r->bno, (float)r->yaw, twz, 0.0f, 0.0f);
 		bno_sim_step(&r->bno, 0.005);
 		gim_sim_step(&r->gim, 0.005);
+		grip_motor_step(r, 0.005);
 
 		upd = llc_imu_service(&r->imu, r->now, 4);
 		if (upd > 0) {
@@ -217,7 +254,7 @@ static void test_boot_and_drive(void)
 	CHECK(r.imu.configured && r.bno.features_set >= 3);
 	CHECK(tel(&r, LLC_TEL_STATUS, buf, sizeof(buf)) > 0);
 	CHECK(strstr(buf, "\"state\":\"ok\"") && NEAR(jnum(buf, "faults"), 0, 0));
-	CHECK(r.llc.servo_us == 1000);   /* gripper abierto */
+	CHECK(r.grip_sleep && r.llc.grip.state == GRIP_IDLE); /* gripper quieto, driver dormido */
 
 	/* curva: avanza, se desliza y gira a la vez durante 4 s */
 	run(&r, 4.0, true, 0.2f, 0.05f, 0.4f);
@@ -470,34 +507,63 @@ static void test_gripper(void)
 
 	rig_init(&r);
 	r.object_at = 0.6f;                  /* pieza entre los dedos */
-	run(&r, 0.6, false, 0, 0, 0);        /* calibra el cero del ACS712 */
-	CHECK(r.llc.grip.zero_ready && NEAR(r.llc.grip.zero_mv, zero_mv, 10.0)); /* incluye el consumo en reposo */
+	run(&r, 0.6, false, 0, 0, 0);        /* calibra el cero del ACS712 (driver dormido) */
+	CHECK(r.llc.grip.zero_ready && NEAR(r.llc.grip.zero_mv, zero_mv, 10.0));
+	CHECK(r.grip_sleep);
 	grip_cmd(&r, 1, 1.0f, 1.0f);
-	run(&r, 1.5, false, 0, 0, 0);
-	CHECK(r.llc.grip.grasped);
-	CHECK(NEAR(r.llc.grip.pos, 0.6, 0.06)); /* se detuvo sobre la pieza */
+	run(&r, 2.0, false, 0, 0, 0);
+	CHECK(r.llc.grip.grasped && r.llc.grip.state == GRIP_HOLDING);
+	CHECK(NEAR(r.llc.grip.pos, 0.6, 0.1)); /* estimada por tiempo: se trabó sobre la pieza */
+	CHECK(NEAR(r.grip_true, 0.6, 0.01));
+	/* control de corriente: sostiene con |I| = max_cur (duty ~ 1.0 / 2.5) */
+	CHECK(NEAR(r.llc.grip.cur_a, 1.0, 0.1) && NEAR(r.grip_duty, 0.4, 0.05) && !r.grip_sleep);
 	CHECK(tel(&r, LLC_TEL_ARM, buf, sizeof(buf)) > 0 && strstr(buf, "\"grasped\":true"));
-	CHECK(r.servo_us > 1500 && r.servo_us < 1700);
-	grip_cmd(&r, 2, 0.0f, 1.0f);         /* abrir suelta */
-	CHECK(!r.llc.grip.grasped);
+	grip_cmd(&r, 2, 1.0f, 0.5f);         /* menos fuerza sobre la misma pieza */
 	run(&r, 1.5, false, 0, 0, 0);
-	CHECK(r.servo_us == 1000);
+	CHECK(r.llc.grip.grasped && NEAR(r.llc.grip.cur_a, 0.5, 0.1));
+
+	/* e-stop mientras sostiene: no suelta la pieza */
+	CHECK(send(&r, LLC_CMD_ESTOP, "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":60,\"active\":true}", false) > 0);
+	run(&r, 0.5, false, 0, 0, 0);
+	CHECK(r.llc.grip.grasped && r.llc.grip.state == GRIP_HOLDING);
+	CHECK(send(&r, LLC_CMD_ESTOP, "{\"v\":1,\"boot_id\":\"" BOOT "\",\"seq\":61,\"active\":false}", false) > 0);
+
+	grip_cmd(&r, 3, 0.0f, 1.0f);         /* abrir suelta y busca el tope */
+	CHECK(!r.llc.grip.grasped);
+	run(&r, 2.5, false, 0, 0, 0);
+	CHECK(r.llc.grip.state == GRIP_IDLE && r.grip_sleep);
+	CHECK(r.grip_true <= 1e-3f && r.llc.grip.pos == 0.0f);
 
 	r.object_at = -1.0f;                 /* cerrar en el aire no es agarre */
-	grip_cmd(&r, 3, 1.0f, 1.0f);
-	run(&r, 1.5, false, 0, 0, 0);
-	CHECK(!r.llc.grip.grasped && r.llc.grip.pos == 1.0f);
+	grip_cmd(&r, 4, 1.0f, 1.0f);
+	run(&r, 2.5, false, 0, 0, 0);
+	CHECK(!r.llc.grip.grasped && r.llc.grip.pos == 1.0f && r.grip_sleep);
 
-	/* pieza dura con max_cur alto: supera el límite duro y abre un poco */
-	grip_cmd(&r, 4, 0.0f, 1.0f);
-	run(&r, 1.5, false, 0, 0, 0);
+	/* apertura parcial: se detiene a media carrera (estimada) */
+	grip_cmd(&r, 5, 0.5f, 1.0f);
+	run(&r, 2.0, false, 0, 0, 0);
+	CHECK(r.llc.grip.state == GRIP_IDLE && NEAR(r.grip_true, 0.5, 0.05));
+
+	/* pieza dura con max_cur alto: supera el límite duro, falla y abre un poco */
+	grip_cmd(&r, 6, 0.0f, 1.0f);
+	run(&r, 2.5, false, 0, 0, 0);
 	r.object_at = 0.5f;
 	r.stall_a = 4.0f;
-	grip_cmd(&r, 5, 1.0f, 5.0f);
-	run(&r, 1.5, false, 0, 0, 0);
+	grip_cmd(&r, 7, 1.0f, 5.0f);
+	run(&r, 2.5, false, 0, 0, 0);
 	CHECK(r.llc.grip.overcurrent && (r.llc.faults & AMR_FAULT_GRIPPER_OVERCURRENT));
-	run(&r, 1.5, false, 0, 0, 0);          /* sigue abriendo mientras la corriente no baje */
-	CHECK(r.llc.grip.pos < 0.5f && !r.llc.grip.grasped);
+	CHECK(!r.llc.grip.grasped && r.grip_true < 0.5f && r.grip_sleep);
+
+	/* nFAULT del DRV8833: se detiene y lo reporta */
+	r.stall_a = 2.5f;
+	grip_cmd(&r, 8, 1.0f, 1.0f);
+	CHECK(!r.llc.grip.overcurrent);      /* un comando nuevo borra la falla */
+	run(&r, 0.2, false, 0, 0, 0);
+	r.drv_fault = true;
+	run(&r, 0.1, false, 0, 0, 0);
+	CHECK(r.llc.grip.driver_fault && r.grip_sleep &&
+	      (r.llc.faults & AMR_FAULT_GRIPPER_OVERCURRENT));
+	r.drv_fault = false;
 }
 
 static void test_battery_critical(void)

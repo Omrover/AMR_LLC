@@ -68,12 +68,22 @@
 	};
 };
 
+/* PTA14 (gpioa_l 14): nSLEEP del DRV8833 del gripper */
+&gpioa_l {
+	status = "okay";
+};
+
 &gpioa_h {
 	status = "okay";
 };
 
 /* PTB21 (gpiob_h 5, EIRQ8): botón de paro físico */
 &gpiob_h {
+	status = "okay";
+};
+
+/* PTE2 (gpioe_l 2, EIRQ2): nFAULT del DRV8833 del gripper */
+&gpioe_l {
 	status = "okay";
 };
 
@@ -125,17 +135,18 @@
 };
 
 /*
- * Servo del gripper a 50 Hz. Reloj eMIOS 160 MHz / 32 (global) / 2 (bus A) =
- * 2.5 MHz: 20 ms = 50000 cuentas (< 65535), resolución de 0.4 us en el pulso.
+ * DRV8833 del gripper: IN1 e IN2 con PWM a 20 kHz (fuera del rango audible),
+ * ambos sobre el bus A (comparten periodo). Reloj eMIOS 160 MHz / 1 / 1:
+ * 50 us = 8000 cuentas, resolución de 1/8000 en el duty.
  */
 &emios1 {
-	clock-divider = <32>;
+	clock-divider = <1>;
 	status = "okay";
 
 	master_bus {
 		emios1_bus_a {
 			mode = "MCB_UP_COUNTER";
-			prescaler = <2>;
+			prescaler = <1>;
 			status = "okay";
 		};
 	};
@@ -145,7 +156,13 @@
 		pinctrl-names = "default";
 		status = "okay";
 
-		gripper_servo: gripper_servo {
+		gripper_in1: gripper_in1 {
+			channel = <3>;
+			master-bus = <&emios1_bus_a>;
+			pwm-mode = "OPWMB";
+		};
+
+		gripper_in2: gripper_in2 {
 			channel = <10>;
 			master-bus = <&emios1_bus_a>;
 			pwm-mode = "OPWMB";

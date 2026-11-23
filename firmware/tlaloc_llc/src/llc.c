@@ -46,9 +46,11 @@ bool llc_init(llc_t *l, const llc_cfg_t *cfg, const rc_transport_t *rc_t,
 	amr_vel_wd_init(&l->wd);
 	l->batt_v = -1.0f;
 	l->logic_v = -1.0f;
-	l->servo_us = grip_pulse_us(&l->grip);
-	if (l->io.servo_set_us != NULL) {
-		(void)l->io.servo_set_us(l->io.ctx, l->servo_us);
+	if (l->io.grip_drive != NULL) {
+		/* driver dormido hasta calibrar el cero del ACS712 */
+		l->grip_out_valid = l->io.grip_drive(l->io.ctx, 0.0f, true) == 0;
+		l->grip_out.duty = 0.0f;
+		l->grip_out.sleep = true;
 	}
 	return l->drive_ok;
 }
@@ -200,7 +202,7 @@ static void update_faults(llc_t *l, uint32_t now_ms)
 	if (!l->imu_valid || (uint32_t)(now_ms - l->imu_ms) > l->cfg.imu_timeout_ms) {
 		f |= AMR_FAULT_IMU;
 	}
-	if (l->grip.overcurrent) {
+	if (l->grip.overcurrent || l->grip.driver_fault) {
 		f |= AMR_FAULT_GRIPPER_OVERCURRENT;
 	}
 	if (l->batt_valid && l->batt_v < l->cfg.battery_critical_v) {
@@ -262,11 +264,16 @@ static void step_gripper(llc_t *l, uint32_t dt_ms)
 {
 	float mv = 0.0f;
 	bool ok = l->io.adc_read_mv != NULL && l->io.adc_read_mv(l->io.ctx, &mv) == 0;
-	uint32_t us = grip_step(&l->grip, dt_ms, mv, ok);
+	bool fault = l->io.grip_fault != NULL && l->io.grip_fault(l->io.ctx);
+	grip_out_t out = grip_step(&l->grip, dt_ms, mv, ok, fault);
 
-	if (us != l->servo_us && l->io.servo_set_us != NULL &&
-	    l->io.servo_set_us(l->io.ctx, us) == 0) {
-		l->servo_us = us;
+	if (l->io.grip_drive == NULL) {
+		return;
+	}
+	if (!l->grip_out_valid || out.sleep != l->grip_out.sleep ||
+	    fabsf(out.duty - l->grip_out.duty) > 1e-4f) {
+		l->grip_out_valid = l->io.grip_drive(l->io.ctx, out.duty, out.sleep) == 0;
+		l->grip_out = out;
 	}
 }
 
@@ -317,6 +324,9 @@ void llc_control_step(llc_t *l, uint32_t now_ms, bool link_ok)
 	slow_step(l, now_ms);
 	if (l->stepped) {
 		fuse(l, now_ms, dt);
+	}
+	if (l->estop) {
+		grip_stop(&l->grip);   /* deja de abrir/cerrar; si sostiene una pieza, la sigue sosteniendo */
 	}
 	step_gripper(l, dt_ms);
 	update_faults(l, now_ms);

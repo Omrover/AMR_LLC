@@ -12,7 +12,8 @@
 
 &pinctrl {
 	/* INT de la BNO080 (activo bajo) en PTA21 = EIRQ3; paro físico en
-	 * PTB21 = EIRQ8 (botón NC a 3.3 V). Ojo: gpio_pin_configure() del driver
+	 * PTB21 = EIRQ8 (botón NC a 3.3 V); nFAULT del DRV8833 del gripper
+	 * (colector abierto, activo bajo) en PTE2 = EIRQ2. Ojo: gpio_pin_configure() del driver
 	 * SIUL2 reescribe PUE/PUS del MSCR, así que la polarización que vale es
 	 * la de los flags GPIO_PULL_* en el overlay de la app. */
 	eirq0_default: eirq0_default {
@@ -25,6 +26,11 @@
 			pinmux = <PTB21_EIRQ8>;
 			input-enable;
 			bias-pull-down;
+		};
+		group3 {
+			pinmux = <PTE2_EIRQ2>;
+			input-enable;
+			bias-pull-up;
 		};
 	};
 
@@ -82,10 +88,11 @@
 		};
 	};
 
-	/* Servo del gripper: eMIOS1 canal 10 (tipo H) en PTA27 */
+	/* DRV8833 del gripper: IN1 = eMIOS1 canal 3 (PTA13), IN2 = eMIOS1 canal 10
+	 * (PTA27), ambos tipo H. nSLEEP es GPIO (PTA14). */
 	emios1_default: emios1_default {
 		group1 {
-			pinmux = <PTA27_EMIOS_1_CH10_H_O>;
+			pinmux = <PTA13_EMIOS_1_CH3_H_O>, <PTA27_EMIOS_1_CH10_H_O>;
 			output-enable;
 		};
 	};

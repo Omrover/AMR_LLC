@@ -34,7 +34,12 @@ static bno_transport_t bno_inner;
 static amr_drive_cfg_t geo;
 static amr_omni_t kin;
 static double yaw;
-static float grip_pos_us = 1000.0f;
+/* Motor del gripper simulado: carrera completa en TLALOC_GRIP_TRAVEL_MS a
+ * TLALOC_GRIP_MOVE_DUTY_PCT; trabado, I = |duty| * 2.5 A. */
+static float grip_duty;
+static bool grip_sleep = true;
+static float grip_pos;
+static int64_t grip_t_ms;
 static K_SEM_DEFINE(imu_sem, 0, 1);
 static int64_t sim_ticks;
 
@@ -196,30 +201,59 @@ void hal_imu_wait(int32_t timeout_ms)
 
 /* --------------------------------------------------------- servo y ACS712 */
 
-static int sim_servo(void *ctx, uint32_t pulse_us)
+static bool grip_blocked(float d)
+{
+	return (d > 0.0f && grip_pos >= 1.0f) || (d < 0.0f && grip_pos <= 0.0f) ||
+	       (IS_ENABLED(CONFIG_TLALOC_SIM_GRIP_OBJECT) && d > 0.0f && grip_pos >= 0.5f);
+}
+
+static void sim_grip_advance(void)
+{
+	int64_t now = k_uptime_get();
+	float dt = (float)(now - grip_t_ms) * 1e-3f;
+	float d = grip_sleep ? 0.0f : grip_duty;
+
+	grip_t_ms = now;
+	if (!grip_blocked(d)) {
+		float v = d / ((float)CONFIG_TLALOC_GRIP_MOVE_DUTY_PCT / 100.0f) /
+			  ((float)CONFIG_TLALOC_GRIP_TRAVEL_MS * 1e-3f);
+
+		grip_pos = CLAMP(grip_pos + v * dt, 0.0f, 1.0f);
+	}
+}
+
+static int sim_grip_drive(void *ctx, float duty, bool sleep)
 {
 	ARG_UNUSED(ctx);
-	grip_pos_us = (float)pulse_us;
+	sim_grip_advance();
+	grip_duty = duty;
+	grip_sleep = sleep;
 	return 0;
+}
+
+static bool sim_grip_fault(void *ctx)
+{
+	ARG_UNUSED(ctx);
+	return false;
 }
 
 static int sim_adc(void *ctx, float *mv)
 {
 	ARG_UNUSED(ctx);
 	/* ACS712 en reposo (0 A) visto a través del divisor: 2.5 V * 2/3. Con
-	 * CONFIG_TLALOC_SIM_GRIP_OBJECT el servo "toca" una pieza a media carrera. */
-	float amps = 0.05f;
+	 * CONFIG_TLALOC_SIM_GRIP_OBJECT hay una pieza a media carrera. */
+	float d = grip_sleep ? 0.0f : grip_duty;
+	float amps;
 
-	if (IS_ENABLED(CONFIG_TLALOC_SIM_GRIP_OBJECT) && grip_pos_us >= 1550.0f) {
-		amps = 1.5f;
-	}
+	sim_grip_advance();
+	amps = grip_blocked(d) ? fabsf(d) * 2.5f : (d != 0.0f ? 0.1f + 0.2f * fabsf(d) : 0.0f);
 	*mv = 1650.0f + amps * (float)CONFIG_TLALOC_ACS712_MV_PER_A_X10 / 10.0f;
 	return 0;
 }
 
 llc_io_t hal_io(void)
 {
-	llc_io_t io = {sim_servo, sim_adc, NULL};
+	llc_io_t io = {sim_grip_drive, sim_adc, sim_grip_fault, NULL};
 
 	return io;
 }

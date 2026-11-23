@@ -9,6 +9,7 @@
  *   Brazo:    FlexCAN0 (zephyr,canbus) a 1 Mbps, 4 GIM6010-8
  */
 #include <errno.h>
+#include <math.h>
 #include <string.h>
 
 #include <zephyr/device.h>
@@ -267,16 +268,93 @@ void hal_imu_wait(int32_t timeout_ms)
 	(void)k_sem_take(&imu_int_sem, K_MSEC(timeout_ms));
 }
 
-/* ---------------------------------------------------------- servo y ACS712 */
+/* ------------------------------------------------- DRV8833 del gripper y ACS712 */
 
-static const struct pwm_dt_spec servo = PWM_DT_SPEC_GET_BY_NAME(USER_NODE, gripper);
+static const struct pwm_dt_spec grip_in1 = PWM_DT_SPEC_GET_BY_NAME(USER_NODE, grip_in1);
+static const struct pwm_dt_spec grip_in2 = PWM_DT_SPEC_GET_BY_NAME(USER_NODE, grip_in2);
+static const struct gpio_dt_spec grip_nsleep = GPIO_DT_SPEC_GET(USER_NODE, grip_nsleep_gpios);
+static const struct gpio_dt_spec grip_nfault = GPIO_DT_SPEC_GET(USER_NODE, grip_fault_gpios);
+static struct gpio_callback grip_fault_cb;
+static atomic_t grip_fault_edge;
+static bool grip_ok;
+static bool grip_fault_ok;
 static const struct adc_dt_spec acs712 = ADC_DT_SPEC_GET_BY_IDX(USER_NODE, 0);
 static bool adc_ok;
 
-static int servo_set_us(void *ctx, uint32_t pulse_us)
+static void grip_fault_handler(const struct device *port, struct gpio_callback *cb, uint32_t pins)
+{
+	ARG_UNUSED(port);
+	ARG_UNUSED(cb);
+	ARG_UNUSED(pins);
+	atomic_set(&grip_fault_edge, 1);
+}
+
+/*
+ * duty > 0 cierra: "forward" del DRV8833 con decaimiento lento (IN1 alto, IN2 con
+ * PWM; el motor se energiza mientras IN2 está bajo). duty < 0 abre ("reverse":
+ * IN2 alto, IN1 con PWM). duty 0 despierto = ambos altos = freno. sleep: nSLEEP
+ * bajo y entradas en 0 (salidas en alta impedancia, motor suelto).
+ */
+static int grip_drive(void *ctx, float duty, bool sleep)
 {
 	ARG_UNUSED(ctx);
-	return pwm_set_pulse_dt(&servo, PWM_USEC(pulse_us));
+	uint32_t period = grip_in1.period;
+	uint32_t low;
+	int rc;
+
+	if (!grip_ok) {
+		return -ENODEV;
+	}
+	if (sleep) {
+		rc = pwm_set_pulse_dt(&grip_in1, 0);
+		rc |= pwm_set_pulse_dt(&grip_in2, 0);
+		rc |= gpio_pin_set_dt(&grip_nsleep, 0);
+		return rc;
+	}
+	if (IS_ENABLED(CONFIG_TLALOC_GRIP_INVERT)) {
+		duty = -duty;
+	}
+	duty = CLAMP(duty, -1.0f, 1.0f);
+	low = (uint32_t)((float)period * (1.0f - fabsf(duty)));
+	rc = gpio_pin_set_dt(&grip_nsleep, 1);
+	if (duty >= 0.0f) {
+		rc |= pwm_set_pulse_dt(&grip_in1, period);
+		rc |= pwm_set_pulse_dt(&grip_in2, low);
+	} else {
+		rc |= pwm_set_pulse_dt(&grip_in2, period);
+		rc |= pwm_set_pulse_dt(&grip_in1, low);
+	}
+	return rc;
+}
+
+static bool grip_fault(void *ctx)
+{
+	ARG_UNUSED(ctx);
+	bool edge = atomic_set(&grip_fault_edge, 0) != 0;
+
+	return grip_fault_ok && (edge || gpio_pin_get_dt(&grip_nfault) > 0);
+}
+
+static int drv8833_init(void)
+{
+	grip_ok = pwm_is_ready_dt(&grip_in1) && pwm_is_ready_dt(&grip_in2) &&
+		  gpio_is_ready_dt(&grip_nsleep) &&
+		  gpio_pin_configure_dt(&grip_nsleep, GPIO_OUTPUT_INACTIVE) == 0;
+	if (!grip_ok) {
+		LOG_ERR("DRV8833 del gripper no disponible (PWM o nSLEEP)");
+		return -ENODEV;
+	}
+	grip_fault_ok = gpio_is_ready_dt(&grip_nfault) &&
+			gpio_pin_configure_dt(&grip_nfault, GPIO_INPUT) == 0;
+	if (grip_fault_ok &&
+	    gpio_pin_interrupt_configure_dt(&grip_nfault, GPIO_INT_EDGE_TO_ACTIVE) == 0) {
+		gpio_init_callback(&grip_fault_cb, grip_fault_handler, BIT(grip_nfault.pin));
+		(void)gpio_add_callback(grip_nfault.port, &grip_fault_cb);
+	}
+	if (!grip_fault_ok) {
+		LOG_WRN("nFAULT del DRV8833 (PTE2) no disponible");
+	}
+	return 0;
 }
 
 static int adc_read_mv(void *ctx, float *mv)
@@ -302,7 +380,7 @@ static int adc_read_mv(void *ctx, float *mv)
 
 llc_io_t hal_io(void)
 {
-	llc_io_t io = {servo_set_us, adc_read_mv, NULL};
+	llc_io_t io = {grip_drive, adc_read_mv, grip_fault, NULL};
 
 	return io;
 }
@@ -497,9 +575,9 @@ int hal_init(void)
 
 	estop_init();
 
-	if (!pwm_is_ready_dt(&servo)) {
-		LOG_ERR("PWM del servo no listo");
-		return -ENODEV;
+	rc = drv8833_init();
+	if (rc != 0) {
+		return rc;
 	}
 	adc_ok = adc_is_ready_dt(&acs712) && adc_channel_setup_dt(&acs712) == 0;
 	if (!adc_ok) {

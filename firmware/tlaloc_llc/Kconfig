@@ -111,13 +111,33 @@ endmenu
 
 menu "Gripper"
 
-config TLALOC_GRIP_PULSE_OPEN_US
-	int "Pulso del servo con el gripper abierto (us)"
-	default 1000
+config TLALOC_GRIP_TRAVEL_MS
+	int "Tiempo de carrera completa del gripper a TLALOC_GRIP_MOVE_DUTY_PCT (ms)"
+	default 1500
+	help
+	  Sin potenciómetro la posición del gripper se estima por tiempo: medir
+	  cuánto tarda en ir de abierto a cerrado y ponerlo aquí.
 
-config TLALOC_GRIP_PULSE_CLOSED_US
-	int "Pulso del servo con el gripper cerrado (us)"
-	default 2000
+config TLALOC_GRIP_MOVE_DUTY_PCT
+	int "Duty del motor del gripper al abrir y al acercarse a la pieza (%)"
+	range 10 100
+	default 60
+
+config TLALOC_GRIP_STALL_MA
+	int "Corriente de motor trabado a TLALOC_GRIP_MOVE_DUTY_PCT (mA)"
+	default 800
+	help
+	  Si la corriente filtrada supera este valor ~80 ms el motor está trabado:
+	  al abrir es el tope (la posición estimada vuelve a 0); al cerrar es el
+	  contacto con la pieza (o el tope de cerrado). Debe quedar entre la
+	  corriente en vacío y la de bloqueo a TLALOC_GRIP_MOVE_DUTY_PCT.
+
+config TLALOC_GRIP_INVERT
+	bool "Invertir el sentido del motor del gripper (intercambia IN1 e IN2)"
+	help
+	  Por defecto cerrar = sentido "forward" del DRV8833 (IN1 alto e IN2 con
+	  PWM, decaimiento lento). Si al pedir cerrar el gripper abre, habilitar
+	  esto (o invertir los cables del motor).
 
 config TLALOC_ACS712_MV_PER_A_X10
 	int "Sensibilidad del ACS712 vista en el ADC (mV/A x10)"

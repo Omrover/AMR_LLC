@@ -27,7 +27,8 @@ void app_config(llc_cfg_t *cfg)
 
 	cfg->imu_z_sign = IS_ENABLED(CONFIG_TLALOC_IMU_Z_DOWN) ? -1.0f : 1.0f;
 
-	cfg->grip.pulse_open_us = CONFIG_TLALOC_GRIP_PULSE_OPEN_US;
-	cfg->grip.pulse_closed_us = CONFIG_TLALOC_GRIP_PULSE_CLOSED_US;
+	cfg->grip.travel_ms = CONFIG_TLALOC_GRIP_TRAVEL_MS;
+	cfg->grip.move_duty = (float)CONFIG_TLALOC_GRIP_MOVE_DUTY_PCT / 100.0f;
+	cfg->grip.stall_a = (float)CONFIG_TLALOC_GRIP_STALL_MA / 1000.0f;
 	cfg->grip.mv_per_a = (float)CONFIG_TLALOC_ACS712_MV_PER_A_X10 / 10.0f;
 }

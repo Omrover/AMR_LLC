@@ -32,10 +32,13 @@ extern "C" {
 #endif
 
 typedef struct {
-	/* 0 en éxito. El pulso se aplica a 50 Hz (servo). */
-	int (*servo_set_us)(void *ctx, uint32_t pulse_us);
+	/* Puente H del gripper (DRV8833): duty -1..1 (> 0 cierra); sleep = nSLEEP
+	 * bajo (salidas en alta impedancia). 0 en éxito. */
+	int (*grip_drive)(void *ctx, float duty, bool sleep);
 	/* Tensión en el pin del ADC del ACS712, en mV. */
 	int (*adc_read_mv)(void *ctx, float *mv);
+	/* nFAULT del DRV8833 activo (NULL: no hay). */
+	bool (*grip_fault)(void *ctx);
 	void *ctx;
 } llc_io_t;
 
@@ -118,7 +121,8 @@ typedef struct {
 	/* tiempos */
 	bool stepped;
 	uint32_t last_ms;
-	uint32_t servo_us;
+	grip_out_t grip_out;         /* última salida aplicada al puente H */
+	bool grip_out_valid;
 	float cpu;                   /* ocupación del lazo de control (0..1) */
 } llc_t;
 
