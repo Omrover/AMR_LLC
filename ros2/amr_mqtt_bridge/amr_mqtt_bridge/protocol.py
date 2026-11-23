@@ -130,7 +130,9 @@ TELEMETRY = {
     'llc/odom': {
         'x': _POS, 'y': _POS, 'yaw': _YAW,
         'vx': number(-10, 10), 'vy': number(-10, 10), 'wz': number(-20, 20),
-        'cov': array(number(0, 1e6), 6),
+        # Sin tope práctico: en dead reckoning (p. ej. RoboClaw sin energía) la varianza
+        # de x, y crece sin límite y rechazar la muestra cortaría /odom. El bridge la satura.
+        'cov': array(number(0, 1e30), 6),
     },
     'llc/imu': {
         'q': array(number(-1.1, 1.1), 4),

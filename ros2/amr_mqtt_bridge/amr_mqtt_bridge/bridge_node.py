@@ -327,7 +327,8 @@ class LlcBridge(Node):
         msg.twist.twist.linear.x = d['vx']
         msg.twist.twist.linear.y = d['vy']
         msg.twist.twist.angular.z = d['wz']
-        c, u = d['cov'], self.unused_cov
+        u = self.unused_cov
+        c = [min(v, u) for v in d['cov']]   # saturada: un valor enorme no aporta
         msg.pose.covariance = diag6([c[0], c[1], u, u, u, c[2]])
         msg.twist.covariance = diag6([c[3], c[4], u, u, u, c[5]])
         self.odom_pub.publish(msg)

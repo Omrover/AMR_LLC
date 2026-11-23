@@ -15,7 +15,8 @@
     # arm_calibration_file (~/.ros/amr_arm_calibration.yaml), que tiene prioridad
     # sobre este valor si coinciden arm_sign y la escala.
     arm_zero_offset: [0, 0, 0, 0]
-    arm_ref_pose: [3.1416, -0.059, 0.058, 0.0]   # rad: pose de reposo medida en el robot
+    arm_ref_pose: [3.14159, -0.059, 0.058, 0.0]  # rad: brazo sentado en su tope (dentro de
+    #                                              los límites de la URDF; q1 <= pi)
     # arm_require_calibration y arm_calibration_file los pone llc_bridge.launch.py
     # (robot real); el emulador y Gazebo no exigen ni guardan calibración.
     arm_sign: [-1, -1, -1, -1]        # sentido motor vs. sentido DH (medido en el robot)
