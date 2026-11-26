@@ -28,6 +28,8 @@ void grip_default_cfg(grip_cfg_t *cfg)
 	cfg->back_off_ms = 200;
 	cfg->start_ignore_ms = 150;
 	cfg->zero_cal_ms = 500;
+	cfg->zero_settle_ms = 200;
+	cfg->zero_tau_s = 0.5f;
 }
 
 void grip_init(grip_t *g, const grip_cfg_t *cfg)
@@ -210,6 +212,14 @@ grip_out_t grip_step(grip_t *g, uint32_t dt_ms, float adc_mv, bool adc_ok, bool 
 	case GRIP_IDLE:
 	default:
 		g->duty = 0.0f;
+		/* Driver dormido = I real 0: el cero sigue a la lectura (ver gripper.h). */
+		g->timer_ms += dt_ms;
+		if (adc_ok && g->timer_ms >= g->cfg.zero_settle_ms) {
+			float a = dt / (g->cfg.zero_tau_s + dt);
+
+			g->zero_mv += a * (adc_mv - g->zero_mv);
+			g->cur_a = fabsf((adc_mv - g->zero_mv) / g->cfg.mv_per_a);
+		}
 		break;
 	}
 

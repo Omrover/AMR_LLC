@@ -103,8 +103,8 @@ class LlcBridge(Node):
         d('arm_gear_ratio', 1.0)
         d('arm_zero_offset', [0, 0, 0, 0])
         d('arm_sign', [1, 1, 1, 1])
-        d('arm_lower', [-math.pi, -math.pi / 2, -2.5, -2.5])
-        d('arm_upper', [math.pi, math.pi / 2, 0.1, 2.5])   # q3 <= 0.1: el codo no cruza el eslabón 2
+        d('arm_lower', [-math.pi, -0.1, -3.4907, -1.2217])   # CAD (convención DH)
+        d('arm_upper', [math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
         d('arm_default_accel', 2.0)
         d('arm_status_rate_hz', 10.0)
         # Calibración por pose de referencia (servicio arm/calibrate).
@@ -113,7 +113,7 @@ class LlcBridge(Node):
         d('arm_require_calibration', False)   # true: sin calibrar en este arranque del
         #                                       MCU, rechaza enable/goal/home
         d('gripper_joint', 'gripper_finger_joint')
-        d('gripper_travel', 0.035)
+        d('gripper_travel', 0.05)
         # Batería LiPo 6S
         d('battery_cells', 6)
         d('battery_capacity_ah', 6.0)

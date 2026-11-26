@@ -19,7 +19,9 @@
  *    comando; abre back_off_ms y se detiene.
  *
  * Al arrancar se mide el cero del ACS712 (driver dormido, zero_cal_ms) y hasta
- * entonces no se mueve.
+ * entonces no se mueve. Después, cada vez que el driver lleva zero_settle_ms dormido
+ * (motor sin corriente) el cero se sigue con un filtro lento (zero_tau_s): corrige
+ * un cero tomado con el sensor aún sin alimentar y la deriva térmica del ACS712.
  */
 #ifndef TLALOC_GRIPPER_H
 #define TLALOC_GRIPPER_H
@@ -48,6 +50,8 @@ typedef struct {
 	uint32_t back_off_ms;       /* cuánto abre ante una falla */
 	uint32_t start_ignore_ms;   /* pico de arranque: no cuenta como tope ni agarre */
 	uint32_t zero_cal_ms;
+	uint32_t zero_settle_ms;    /* dormido este tiempo antes de seguir el cero */
+	float zero_tau_s;           /* constante de tiempo del seguimiento del cero */
 } grip_cfg_t;
 
 typedef enum {

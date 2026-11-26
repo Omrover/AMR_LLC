@@ -45,6 +45,7 @@ typedef struct {
 	float stall_a;        /* corriente trabado con duty 1 */
 	bool adc_ok;
 	bool drv_fault;       /* nFAULT del DRV8833 */
+	bool sensor_off;      /* ACS712 sin alimentar: el ADC lee 0 V */
 	/* verdad del terreno */
 	double x, y, yaw;
 	uint32_t next_vel_ms;
@@ -101,6 +102,10 @@ static int io_adc(void *ctx, float *mv)
 	float d = grip_d(r);
 	float amps;
 
+	if (r->sensor_off) {
+		*mv = 0.0f;
+		return 0;
+	}
 	if (!r->adc_ok) {
 		return -5;
 	}
@@ -566,6 +571,28 @@ static void test_gripper(void)
 	r.drv_fault = false;
 }
 
+/* El ACS712 se alimenta después que la Tlaloc: el cero del arranque sale en 0 mV y el
+ * gripper reportaba ~13 A en reposo. Con el driver dormido el cero se corrige solo. */
+static void test_gripper_zero_tracking(void)
+{
+	rig_t r;
+
+	rig_init(&r);
+	r.sensor_off = true;
+	run(&r, 0.6, false, 0, 0, 0);
+	CHECK(r.llc.grip.zero_ready && r.llc.grip.zero_mv < 10.0f);
+	r.sensor_off = false;                /* llegan los 5 V del sensor */
+	run(&r, 0.3, false, 0, 0, 0);
+	CHECK(r.llc.grip.cur_a > 5.0f);      /* el cero aún está mal */
+	run(&r, 3.0, false, 0, 0, 0);
+	CHECK(NEAR(r.llc.grip.zero_mv, zero_mv, 5.0) && r.llc.grip.cur_a < 0.05f);
+	/* moviendo no se toca el cero (hay corriente real) */
+	grip_cmd(&r, 1, 1.0f, 1.0f);
+	run(&r, 0.5, false, 0, 0, 0);
+	CHECK(r.llc.grip.state == GRIP_CLOSING && NEAR(r.llc.grip.zero_mv, zero_mv, 5.0));
+	CHECK(r.llc.grip.cur_a > 0.1f);
+}
+
 static void test_battery_critical(void)
 {
 	rig_t r;
@@ -588,6 +615,7 @@ int main(void)
 	test_arm();
 	test_imu_reset_and_loss();
 	test_gripper();
+	test_gripper_zero_tracking();
 	test_battery_critical();
 	if (failures == 0) {
 		printf("tlaloc_llc: PASSED (0 failures)\n");
