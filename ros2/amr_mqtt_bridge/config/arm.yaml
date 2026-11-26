@@ -16,15 +16,17 @@
     # sobre este valor si coinciden arm_sign y la escala.
     arm_zero_offset: [0, 0, 0, 0]
     arm_ref_pose: [3.14159, -0.059, 0.058, 0.0]  # rad: brazo sentado en su tope (dentro de
-    #                                              los límites de la URDF; q1 <= pi)
+    #                                              los límites de la URDF; q1 = pi es la mitad
+    #                                              del recorrido de la junta 1)
     # arm_require_calibration y arm_calibration_file los pone llc_bridge.launch.py
     # (robot real); el emulador y Gazebo no exigen ni guardan calibración.
     arm_sign: [-1, -1, -1, -1]        # sentido motor vs. sentido DH (medido en el robot)
     # Límites del CAD en la convención DH (q_CAD = (q1 - pi, -q2, -q3, q4)), igual que
-    # params.xacro. q2 >= -0.06: el tope físico (arm_ref_pose q2 = -0.059); q3 <= 0.1
-    # (CAD: 0) para incluir arm_ref_pose (q3 = 0.058).
-    arm_lower: [-3.1416, -0.06, -3.4907, -1.2217]
-    arm_upper: [3.1416, 3.4907, 0.1, 1.5708]
+    # params.xacro. q1 en [0, 2 pi]: +-180 grados alrededor de rest (q1 = pi). q2 >= -0.06:
+    # el tope físico (arm_ref_pose q2 = -0.059). q3 <= 0.1 (CAD: 0) para incluir
+    # arm_ref_pose (q3 = 0.058).
+    arm_lower: [0.0, -0.06, -3.4907, -1.2217]
+    arm_upper: [6.2832, 3.4907, 0.1, 1.5708]
     arm_default_accel: 2.0            # rad/s^2 si el cliente no especifica
     arm_status_rate_hz: 10.0
     gripper_joint: gripper_finger_joint

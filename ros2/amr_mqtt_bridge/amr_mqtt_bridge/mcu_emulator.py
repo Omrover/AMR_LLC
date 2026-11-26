@@ -62,7 +62,7 @@ class EmulatedMcu:
     def __init__(self, wheel_radius=0.0762, half_length=0.1583, half_width=0.1734,
                  battery_volt=25.0,
                  drain_v_per_s=0.002, grip_object_at=0.6, arm_vmax_rpm=30.0,
-                 noise=0.0, boot_id=None, clock=time.monotonic):
+                 noise=0.0, boot_id=None, clock=time.monotonic, arm_init_counts=None):
         self.kin = MecanumKinematics(wheel_radius, half_length, half_width)
         self.boot_id = boot_id or secrets.token_hex(8)
         self.clock = clock
@@ -81,7 +81,9 @@ class EmulatedMcu:
         self.lin_acc, self.ang_acc = 1.0, 3.0
         # Brazo y gripper
         self.arm_enabled = False
-        self.joints = [Trapezoid() for _ in range(p.N_JOINTS)]
+        # Como el robot real al encender: el brazo donde quedó (por defecto 0 counts).
+        init = list(arm_init_counts or [0] * p.N_JOINTS)
+        self.joints = [Trapezoid(init[i]) for i in range(p.N_JOINTS)]
         self.arm_vmax = arm_vmax_rpm * self.COUNTS_PER_REV / 60.0
         self.grip_pos = 0.0
         self.grip_target = 0.0
@@ -362,6 +364,8 @@ def main(argv=None):
     ap.add_argument('--half-length', type=float, default=0.1583)
     ap.add_argument('--half-width', type=float, default=0.1734)
     ap.add_argument('--noise', type=float, default=0.0)
+    ap.add_argument('--arm-init-counts', default='0,0,0,0',
+                    help='counts iniciales de las 4 juntas separados por coma')
     ap.add_argument('--duration', type=float, default=None)
     args, _ = ap.parse_known_args(argv)   # tolera --ros-args al lanzarse con ros2 run
 
@@ -369,7 +373,8 @@ def main(argv=None):
                       half_width=args.half_width,
                       battery_volt=args.battery_volt, drain_v_per_s=args.drain,
                       grip_object_at=args.grip_object_at if args.grip_object_at >= 0 else None,
-                      noise=args.noise)
+                      noise=args.noise,
+                      arm_init_counts=[int(float(c)) for c in args.arm_init_counts.split(',')])
     runner = MqttMcuRunner(mcu, args.host, args.port, args.prefix)
     signal.signal(signal.SIGTERM, lambda *a: runner.stop_event.set())
     print(f'MCU emulado boot_id={mcu.boot_id} -> {args.host}:{args.port} prefix {args.prefix}',
