@@ -593,6 +593,34 @@ static void test_gripper_zero_tracking(void)
 	CHECK(r.llc.grip.cur_a > 0.1f);
 }
 
+/* Arranque con el gripper casi cerrado (posición desconocida): la primera apertura
+ * empuja hasta el tope; y un pulso suelto de nFAULT (< drv_fault_ms) no lo detiene. */
+static void test_gripper_homing_and_nfault_glitch(void)
+{
+	rig_t r;
+
+	rig_init(&r);
+	r.grip_true = 0.8f;
+	run(&r, 0.6, false, 0, 0, 0);
+	CHECK(!r.llc.grip.homed);
+	grip_cmd(&r, 1, 0.0f, 1.0f);
+	run(&r, 2.5, false, 0, 0, 0);
+	CHECK(r.grip_true <= 1e-3f && r.llc.grip.homed && r.llc.grip.state == GRIP_IDLE);
+
+	grip_cmd(&r, 2, 1.0f, 1.0f);
+	run(&r, 0.3, false, 0, 0, 0);
+	r.drv_fault = true;                  /* pulso de 20 ms */
+	run(&r, 0.02, false, 0, 0, 0);
+	r.drv_fault = false;
+	run(&r, 0.1, false, 0, 0, 0);
+	CHECK(!r.llc.grip.driver_fault && r.llc.grip.state == GRIP_CLOSING);
+	CHECK(!(r.llc.faults & AMR_FAULT_GRIPPER_OVERCURRENT));
+	r.drv_fault = true;                  /* VM ausente: nFAULT fijo */
+	run(&r, 0.1, false, 0, 0, 0);
+	CHECK(r.llc.grip.driver_fault && r.grip_sleep);
+	r.drv_fault = false;
+}
+
 static void test_battery_critical(void)
 {
 	rig_t r;
@@ -616,6 +644,7 @@ int main(void)
 	test_imu_reset_and_loss();
 	test_gripper();
 	test_gripper_zero_tracking();
+	test_gripper_homing_and_nfault_glitch();
 	test_battery_critical();
 	if (failures == 0) {
 		printf("tlaloc_llc: PASSED (0 failures)\n");

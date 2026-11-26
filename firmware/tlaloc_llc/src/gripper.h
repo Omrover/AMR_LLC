@@ -15,8 +15,11 @@
  *    de agarre constante, sin quemar el motor en bloqueo). Si se traba ya
  *    cerrado, no hay pieza: se detiene sin grasped.
  *  - Protecciones: |I| > hard_limit_a durante hard_limit_ms, o nFAULT del
- *    DRV8833: falla latcheada (overcurrent / driver_fault) hasta el siguiente
+ *    DRV8833 activo drv_fault_ms seguidos (se ignora drv_wake_ms tras despertar el
+ *    driver): falla latcheada (overcurrent / driver_fault) hasta el siguiente
  *    comando; abre back_off_ms y se detiene.
+ *  - Al arrancar la posición es desconocida (homed = false): la primera apertura
+ *    empuja la carrera completa (travel_ms + overtravel_ms) o hasta el tope.
  *
  * Al arrancar se mide el cero del ACS712 (driver dormido, zero_cal_ms) y hasta
  * entonces no se mueve. Después, cada vez que el driver lleva zero_settle_ms dormido
@@ -51,6 +54,8 @@ typedef struct {
 	uint32_t start_ignore_ms;   /* pico de arranque: no cuenta como tope ni agarre */
 	uint32_t zero_cal_ms;
 	uint32_t zero_settle_ms;    /* dormido este tiempo antes de seguir el cero */
+	uint32_t drv_fault_ms;      /* nFAULT sostenido este tiempo = falla */
+	uint32_t drv_wake_ms;       /* nFAULT ignorado al despertar el driver */
 	float zero_tau_s;           /* constante de tiempo del seguimiento del cero */
 } grip_cfg_t;
 
@@ -82,6 +87,8 @@ typedef struct {
 	bool grasped;
 	bool overcurrent;           /* falla latcheada hasta el siguiente comando */
 	bool driver_fault;          /* nFAULT del DRV8833, latcheada igual */
+	bool homed;                 /* se conoce la posición (tope de abierto visto) */
+	uint32_t nfault_ms;         /* tiempo seguido con nFAULT activo */
 	bool adc_fault;
 	uint32_t cal_ms;
 	double cal_acc;

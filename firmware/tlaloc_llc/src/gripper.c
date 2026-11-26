@@ -29,6 +29,8 @@ void grip_default_cfg(grip_cfg_t *cfg)
 	cfg->start_ignore_ms = 150;
 	cfg->zero_cal_ms = 500;
 	cfg->zero_settle_ms = 200;
+	cfg->drv_fault_ms = 50;
+	cfg->drv_wake_ms = 20;
 	cfg->zero_tau_s = 0.5f;
 }
 
@@ -61,6 +63,7 @@ void grip_command(grip_t *g, float pos, float max_cur)
 	g->overcurrent = false;
 	g->driver_fault = false;
 	g->hard_ms = 0;
+	g->nfault_ms = 0;
 	if (pos <= POS_EPS || pos < g->pos - POS_EPS) {
 		/* abrir (pos 0 siempre busca el tope para corregir la estimación) */
 		g->grasped = false;
@@ -134,11 +137,18 @@ grip_out_t grip_step(grip_t *g, uint32_t dt_ms, float adc_mv, bool adc_ok, bool 
 	}
 	g->run_ms += dt_ms;
 
-	/* nFAULT (sobrecorriente o temperatura del DRV8833): se detiene. */
-	if (drv_fault && g->state != GRIP_IDLE) {
-		g->driver_fault = true;
-		g->grasped = false;
-		start(g, GRIP_IDLE);
+	/* nFAULT (subtensión de VM, sobrecorriente o temperatura del DRV8833): se
+	 * detiene si se sostiene drv_fault_ms; un pulso suelto no cuenta. */
+	if (drv_fault && g->state != GRIP_IDLE && g->run_ms > g->cfg.drv_wake_ms) {
+		g->nfault_ms += dt_ms;
+		if (g->nfault_ms >= g->cfg.drv_fault_ms) {
+			g->driver_fault = true;
+			g->grasped = false;
+			g->nfault_ms = 0;
+			start(g, GRIP_IDLE);
+		}
+	} else {
+		g->nfault_ms = 0;
 	}
 	/* Sobrecorriente sostenida: falla y abre un poco. */
 	if (adc_ok && g->state != GRIP_IDLE && g->cur_a > g->cfg.hard_limit_a) {
@@ -159,9 +169,17 @@ grip_out_t grip_step(grip_t *g, uint32_t dt_ms, float adc_mv, bool adc_ok, bool 
 		move(g, -1.0f, dt);
 		if (sustained(g, adc_ok, g->cfg.stall_a, dt_ms)) {
 			g->pos = 0.0f;       /* tope de abierto: corrige la estimación */
+			g->homed = true;
 			start(g, GRIP_IDLE);
 		} else if (g->target > POS_EPS && g->pos <= g->target) {
 			start(g, GRIP_IDLE); /* apertura parcial */
+		} else if (!g->homed) {
+			/* posición desconocida: carrera completa antes de darla por abierta */
+			if (g->run_ms >= g->cfg.travel_ms + g->cfg.overtravel_ms) {
+				g->pos = 0.0f;
+				g->homed = true;
+				start(g, GRIP_IDLE);
+			}
 		} else if (g->pos <= 0.0f) {
 			g->timer_ms += dt_ms;
 			if (g->timer_ms >= g->cfg.overtravel_ms) {
