@@ -103,7 +103,7 @@ class LlcBridge(Node):
         d('arm_gear_ratio', 1.0)
         d('arm_zero_offset', [0, 0, 0, 0])
         d('arm_sign', [1, 1, 1, 1])
-        d('arm_lower', [-math.pi, -0.1, -3.4907, -1.2217])   # CAD (convención DH)
+        d('arm_lower', [-math.pi, -0.06, -3.4907, -1.2217])   # CAD (convención DH)
         d('arm_upper', [math.pi, 3.4907, 0.1, 1.5708])      # q3 <= 0.1: pose de calibración
         d('arm_default_accel', 2.0)
         d('arm_status_rate_hz', 10.0)
