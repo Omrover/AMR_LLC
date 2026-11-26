@@ -12,12 +12,14 @@ void grip_default_cfg(grip_cfg_t *cfg)
 	cfg->overtravel_ms = 300;
 	cfg->move_duty = 0.6f;
 	cfg->max_duty = 0.9f;
-	/* PI de corriente: con el motor trabado I ~ duty * I_bloqueo; kp/ki chicos
-	 * porque el lazo corre a 50 Hz y el ACS712 es ruidoso. */
-	cfg->kp = 0.15f;
-	cfg->ki = 1.5f;
+	/* PI de corriente normalizado (ver gripper.h): kp sin unidades, ki ~ 1/0.2 s.
+	 * Arranca en el duty estimado para max_cur (feedforward), así que el
+	 * integrador solo corrige el error de la estimación. */
+	cfg->kp = 0.3f;
+	cfg->ki = 5.0f;
 	cfg->closed_pos = 0.95f;
 	cfg->stall_a = 0.8f;
+	cfg->stall_close_a = 0.8f;
 	/* ACS712-05B: 185 mV/A a 5 V. Con un divisor 2/3 (10k/20k) hacia el ADC de
 	 * 3.3 V se ve 123.3 mV/A; con 1/2 serían 92.5 (TLALOC_ACS712_MV_PER_A_X10). */
 	cfg->mv_per_a = 123.3f;
@@ -55,6 +57,14 @@ static void start(grip_t *g, grip_state_t st)
 	g->run_ms = 0;
 }
 
+/* Duty que debería dar max_cur según la ganancia medida al contacto. */
+static void hold_feedforward(grip_t *g)
+{
+	float k = g->k_est > 0.0f ? g->k_est : g->cfg.stall_close_a / g->cfg.move_duty;
+
+	g->integ = clampf(g->max_cur / fmaxf(k, 1e-3f), 0.0f, g->cfg.max_duty);
+}
+
 void grip_command(grip_t *g, float pos, float max_cur)
 {
 	pos = clampf(pos, 0.0f, 1.0f);
@@ -72,8 +82,8 @@ void grip_command(grip_t *g, float pos, float max_cur)
 		/* ya sostiene: el comando solo cambia la fuerza (max_cur) */
 		if (g->state != GRIP_HOLDING) {
 			start(g, GRIP_HOLDING);
-			g->integ = g->cfg.move_duty;
 		}
+		hold_feedforward(g);
 	} else if (pos > g->pos + POS_EPS || pos >= 1.0f) {
 		start(g, GRIP_CLOSING);
 	} else {
@@ -190,11 +200,13 @@ grip_out_t grip_step(grip_t *g, uint32_t dt_ms, float adc_mv, bool adc_ok, bool 
 	case GRIP_CLOSING:
 		g->duty = g->cfg.move_duty;
 		move(g, 1.0f, dt);
-		/* contacto = el motor se traba (stall_a), o antes si max_cur es menor */
-		if (sustained(g, adc_ok, fminf(g->max_cur, g->cfg.stall_a), dt_ms)) {
+		/* contacto = el motor se traba (stall_close_a), o antes si max_cur es menor */
+		if (sustained(g, adc_ok, fminf(g->max_cur, g->cfg.stall_close_a), dt_ms)) {
 			if (g->pos < g->cfg.closed_pos) {
 				g->grasped = true;   /* se trabó antes del tope: hay pieza */
-				g->integ = g->cfg.move_duty;
+				/* ganancia real sobre la pieza: corriente / duty al trabarse */
+				g->k_est = fmaxf(g->cur_a / g->cfg.move_duty, 0.02f);
+				hold_feedforward(g);
 				start(g, GRIP_HOLDING);
 			} else {
 				g->pos = 1.0f;       /* cerró en vacío */
@@ -211,7 +223,8 @@ grip_out_t grip_step(grip_t *g, uint32_t dt_ms, float adc_mv, bool adc_ok, bool 
 		break;
 	case GRIP_HOLDING:
 		if (adc_ok) {
-			float e = g->max_cur - g->cur_a;
+			float k = g->k_est > 0.0f ? g->k_est : g->cfg.stall_close_a / g->cfg.move_duty;
+			float e = (g->max_cur - g->cur_a) / fmaxf(k, 1e-3f);   /* en duty */
 
 			g->integ = clampf(g->integ + g->cfg.ki * e * dt, 0.0f, g->cfg.max_duty);
 			g->duty = clampf(g->cfg.kp * e + g->integ, 0.0f, g->cfg.max_duty);

@@ -132,6 +132,15 @@ config TLALOC_GRIP_STALL_MA
 	  contacto con la pieza (o el tope de cerrado). Debe quedar entre la
 	  corriente en vacío y la de bloqueo a TLALOC_GRIP_MOVE_DUTY_PCT.
 
+config TLALOC_GRIP_STALL_CLOSE_MA
+	int "Corriente de motor trabado al CERRAR (mA); 0 = igual que TLALOC_GRIP_STALL_MA"
+	default 0
+	help
+	  Umbral de contacto con la pieza (y tope de cerrado). Medido en el robot
+	  (2026-11-25): al cerrar el motor consume 2-3 veces menos que al abrir con
+	  el mismo duty, así que necesita su propio umbral, entre la corriente en
+	  vacío cerrando y la de apretar la pieza.
+
 config TLALOC_GRIP_INVERT
 	bool "Invertir el sentido del motor del gripper (intercambia IN1 e IN2)"
 	help

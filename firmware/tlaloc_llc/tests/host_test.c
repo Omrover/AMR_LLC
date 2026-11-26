@@ -46,6 +46,7 @@ typedef struct {
 	bool adc_ok;
 	bool drv_fault;       /* nFAULT del DRV8833 */
 	bool sensor_off;      /* ACS712 sin alimentar: el ADC lee 0 V */
+	float close_scale;    /* corriente al cerrar / al abrir (motor asimétrico) */
 	/* verdad del terreno */
 	double x, y, yaw;
 	uint32_t next_vel_ms;
@@ -111,6 +112,9 @@ static int io_adc(void *ctx, float *mv)
 	}
 	amps = grip_blocked(r, d) ? fabsf(d) * r->stall_a
 				  : (d != 0.0f ? 0.1f + 0.2f * fabsf(d) : 0.0f);
+	if (d > 0.0f) {
+		amps *= r->close_scale;
+	}
 	*mv = zero_mv + amps * r->llc.cfg.grip.mv_per_a;
 	return 0;
 }
@@ -135,6 +139,7 @@ static void rig_init_ex(rig_t *r, bool can)
 	r->now = 1000;
 	r->object_at = -1.0f;
 	r->stall_a = 2.5f;
+	r->close_scale = 1.0f;
 	r->adc_ok = true;
 	r->grip_sleep = true;
 	rc_sim_init(&r->rc, 128, 129);
@@ -621,6 +626,36 @@ static void test_gripper_homing_and_nfault_glitch(void)
 	r.drv_fault = false;
 }
 
+/* Medido en el robot: al cerrar el motor consume ~1/3 que al abrir. Con un solo umbral
+ * (el de abrir) nunca detecta la pieza; con stall_close_a propio sí, y sostiene. */
+static void test_gripper_asymmetric_motor(void)
+{
+	rig_t r;
+
+	rig_init(&r);
+	r.stall_a = 0.7f;                    /* trabado a duty 1: abre 0.42 A a 0.6 */
+	r.close_scale = 0.35f;               /* cierra: libre 0.08 A, trabado 0.15 A */
+	r.object_at = 0.6f;
+	r.llc.grip.cfg.stall_a = 0.35f;
+	run(&r, 0.6, false, 0, 0, 0);
+	grip_cmd(&r, 1, 1.0f, 1.0f);
+	run(&r, 2.5, false, 0, 0, 0);
+	CHECK(!r.llc.grip.grasped);          /* umbral único: la pieza pasa desapercibida */
+	grip_cmd(&r, 2, 0.0f, 1.0f);
+	run(&r, 2.5, false, 0, 0, 0);
+	CHECK(r.llc.grip.homed && r.grip_true <= 1e-3f);
+
+	r.llc.grip.cfg.stall_close_a = 0.12f;
+	grip_cmd(&r, 3, 1.0f, 0.2f);         /* corriente alcanzable al cerrar */
+	run(&r, 2.5, false, 0, 0, 0);
+	CHECK(r.llc.grip.grasped && r.llc.grip.state == GRIP_HOLDING);
+	CHECK(NEAR(r.grip_true, 0.6, 0.01) && NEAR(r.llc.grip.cur_a, 0.2, 0.02));
+	/* más fuerza sobre la misma pieza: llega rápido (feedforward con k_est) */
+	grip_cmd(&r, 4, 1.0f, 0.1f);
+	run(&r, 0.4, false, 0, 0, 0);
+	CHECK(r.llc.grip.grasped && NEAR(r.llc.grip.cur_a, 0.1, 0.02));
+}
+
 static void test_battery_critical(void)
 {
 	rig_t r;
@@ -645,6 +680,7 @@ int main(void)
 	test_gripper();
 	test_gripper_zero_tracking();
 	test_gripper_homing_and_nfault_glitch();
+	test_gripper_asymmetric_motor();
 	test_battery_critical();
 	if (failures == 0) {
 		printf("tlaloc_llc: PASSED (0 failures)\n");

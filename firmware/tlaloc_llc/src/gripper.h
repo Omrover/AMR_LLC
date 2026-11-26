@@ -10,7 +10,7 @@
  *  - Abrir: gira hacia abrir hasta que la corriente pasa stall_a (tope) o se
  *    agota la carrera estimada más overtravel_ms. Luego suelta y duerme el driver.
  *  - Cerrar: gira hacia cerrar a move_duty. Si se traba (|I| > min(max_cur,
- *    stall_a) durante grasp_ms) antes de llegar a closed_pos, hay pieza: grasped y
+ *    stall_close_a) durante grasp_ms) antes de llegar a closed_pos, hay pieza: grasped y
  *    pasa a SOSTENER, un PI que ajusta el duty para mantener |I| = max_cur (fuerza
  *    de agarre constante, sin quemar el motor en bloqueo). Si se traba ya
  *    cerrado, no hay pieza: se detiene sin grasped.
@@ -41,10 +41,15 @@ typedef struct {
 	uint32_t overtravel_ms;     /* empuje extra al abrir para asegurar el tope */
 	float move_duty;            /* 0..1 al abrir y al acercarse a la pieza */
 	float max_duty;             /* límite del PI al sostener */
-	float kp;                   /* PI de corriente: duty por A */
-	float ki;                   /* duty por A*s */
+	/* PI de corriente normalizado por la ganancia del motor sobre la pieza (k_est,
+	 * A por unidad de duty, medida al contacto): el lazo responde igual con un
+	 * motor de 0.2 A o de 2 A trabado. */
+	float kp;                   /* adimensional */
+	float ki;                   /* 1/s (~1/constante de tiempo) */
 	float closed_pos;           /* trabarse más allá de esto = cerró en vacío */
-	float stall_a;              /* corriente de motor trabado a move_duty (tope / contacto) */
+	float stall_a;              /* corriente de motor trabado a move_duty: tope de abierto */
+	float stall_close_a;        /* lo mismo al cerrar (contacto / tope de cerrado); el motor
+	                             * puede consumir distinto en cada sentido */
 	float mv_per_a;             /* sensibilidad vista en el pin del ADC (con divisor) */
 	float cur_tau_s;            /* constante de tiempo del filtro de corriente */
 	uint32_t grasp_ms;          /* tiempo sobre max_cur para declarar agarre/tope */
@@ -81,7 +86,8 @@ typedef struct {
 	float max_cur;
 	float cur_a;                /* |I| filtrada */
 	float duty;                 /* última salida */
-	float integ;                /* integrador del PI */
+	float integ;                /* integrador del PI (duty) */
+	float k_est;                /* A por unidad de duty sobre la pieza (0 = sin medir) */
 	float zero_mv;
 	bool zero_ready;
 	bool grasped;
